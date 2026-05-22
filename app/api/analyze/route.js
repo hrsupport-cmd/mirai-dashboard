@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const ANTHROPIC_KEY = "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";
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 export async function POST(request) {
   try {
