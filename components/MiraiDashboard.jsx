@@ -1,6 +1,5 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import {
   LayoutDashboard, Sparkles, Megaphone, Calendar, ChevronRight,
   Save, Clock, CheckCircle2, Pencil, Trash2, Plus, X, Check,
@@ -9,9 +8,17 @@ import {
   GitBranch, TrendingUp
 } from 'lucide-react';
 
-const SUPABASE_URL = "https://tdqvoyhdeseuncqtytpv.supabase.co";
-const SUPABASE_KEY = "sb_publishable_amfdIcyLqxdB8oLI3A8zGw_2La0DJS-";
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// API helper - 모든 DB 작업은 서버 API를 통해 처리
+async function dbCall(action, payload = {}) {
+  const res = await fetch('/api/db', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, payload }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json;
+}
 
 const PARTS = ["인사", "총무", "직속"];
 const STATUS_KEYS = ["완료", "진행중", "예정", "지연"];
@@ -599,8 +606,11 @@ function SearchView() {
   const handleSearch = async () => {
     if(!start||!end) return; setLoading(true);
     const ids = weekIdsInRange(start,end);
-    const {data} = await supabase.from('weekly_reports').select('*').in('week_id',ids);
-    setResults(data||[]); setLoading(false);
+    try {
+      const { data } = await dbCall('search', { week_ids: ids });
+      setResults(data||[]);
+    } catch(e) { setResults([]); }
+    setLoading(false);
   };
 
   const allItems=[];
@@ -766,11 +776,16 @@ export default function MiraiDashboard() {
   // Load weeks
   useEffect(()=>{
     async function loadWeeks() {
-      const {data} = await supabase.from('weekly_reports').select('week_id');
-      const ids = [...new Set((data||[]).map(r=>r.week_id))].sort();
-      const cur = dateToWeekId(new Date());
-      const all = ids.includes(cur)?ids:[...ids,cur].sort();
-      setWeeks(all); setSelectedWeek(all[all.length-1]||cur);
+      try {
+        const { data } = await dbCall('load_weeks');
+        const ids = [...new Set((data||[]).map(r=>r.week_id))].sort();
+        const cur = dateToWeekId(new Date());
+        const all = ids.includes(cur)?ids:[...ids,cur].sort();
+        setWeeks(all); setSelectedWeek(all[all.length-1]||cur);
+      } catch(e) {
+        const cur = dateToWeekId(new Date());
+        setWeeks([cur]); setSelectedWeek(cur);
+      }
     }
     loadWeeks();
   },[]);
@@ -781,24 +796,34 @@ export default function MiraiDashboard() {
     async function load() {
       setLoading(true); setAnalysis(null);
       try {
-        const {data} = await supabase.from('weekly_reports').select('*')
-          .eq('week_id',selectedWeek).eq('part_name',activeTab).maybeSingle();
+        const { data } = await dbCall('load', { week_id: selectedWeek, part_name: activeTab });
         if(data){
-          setReportData({prev_work:toItems(data.prev_work),curr_work:toItems(data.curr_work),next_work:toItems(data.next_work),ax_case:data.ax_case||'',notices:data.notices||''});
+          setReportData({
+            prev_work: toItems(data.prev_work),
+            curr_work: toItems(data.curr_work),
+            next_work: toItems(data.next_work),
+            ax_case: data.ax_case||'',
+            notices: data.notices||'',
+          });
         } else {
-          const wIdx=weeks.indexOf(selectedWeek);
-          let auto=EMPTY();
-          if(wIdx>0){
-            const {data:prev}=await supabase.from('weekly_reports').select('curr_work')
-              .eq('week_id',weeks[wIdx-1]).eq('part_name',activeTab).maybeSingle();
-            if(prev?.curr_work?.length){
-              auto={...EMPTY(),prev_work:toItems(prev.curr_work)};
-              setToast(`✅ ${weeks[wIdx-1]} 금주 내용 → 전주 실적 자동 이관`);
-            }
+          // 이번 주 데이터 없음 → 전주 금주 내용 자동 이관
+          const wIdx = weeks.indexOf(selectedWeek);
+          let auto = EMPTY();
+          if(wIdx > 0){
+            try {
+              const { data: prev } = await dbCall('load_prev', { week_id: weeks[wIdx-1], part_name: activeTab });
+              if(prev?.curr_work?.length){
+                auto = { ...EMPTY(), prev_work: toItems(prev.curr_work) };
+                setToast(`✅ ${weeks[wIdx-1]} 금주 내용 → 전주 실적 자동 이관`);
+              }
+            } catch(e) { console.error('carry-over error:', e); }
           }
           setReportData(auto);
         }
-      } catch(e){ console.error(e); }
+      } catch(e){
+        console.error('load error:', e);
+        setToast('데이터 로드 실패: ' + e.message);
+      }
       setLoading(false);
     }
     load();
@@ -808,63 +833,49 @@ export default function MiraiDashboard() {
   useEffect(()=>{
     if(!selectedWeek||(viewMode!=='analytics'&&viewMode!=='board')) return;
     async function loadAll() {
-      const {data:rows}=await supabase.from('weekly_reports').select('*').eq('week_id',selectedWeek);
-      const map={};
-      (rows||[]).forEach(r=>{map[r.part_name]={prev_work:toItems(r.prev_work),curr_work:toItems(r.curr_work),next_work:toItems(r.next_work)};});
-      map[activeTab]={prev_work:reportData.prev_work,curr_work:reportData.curr_work,next_work:reportData.next_work};
-      setAllPartData(map);
+      try {
+        const { data: rows } = await dbCall('load_all', { week_id: selectedWeek });
+        const map = {};
+        (rows||[]).forEach(r=>{
+          map[r.part_name] = {
+            prev_work: toItems(r.prev_work),
+            curr_work: toItems(r.curr_work),
+            next_work: toItems(r.next_work),
+          };
+        });
+        map[activeTab] = {
+          prev_work: reportData.prev_work,
+          curr_work: reportData.curr_work,
+          next_work: reportData.next_work,
+        };
+        setAllPartData(map);
+      } catch(e) { console.error('load_all error:', e); }
     }
     loadAll();
   },[viewMode,selectedWeek,reportData]); // eslint-disable-line
 
   const handleSave = async () => {
     setSaveState('saving');
-    const payload = {
-      week_id: selectedWeek,
-      part_name: activeTab,
-      prev_work: fromItems(reportData.prev_work),
-      curr_work: fromItems(reportData.curr_work),
-      next_work: fromItems(reportData.next_work),
-      ax_case: reportData.ax_case,
-      notices: reportData.notices,
-    };
     try {
-      const { data: existing } = await supabase
-        .from('weekly_reports')
-        .select('id')
-        .eq('week_id', selectedWeek)
-        .eq('part_name', activeTab)
-        .maybeSingle();
-
-      let error;
-      if (existing) {
-        ({ error } = await supabase
-          .from('weekly_reports')
-          .update(payload)
-          .eq('week_id', selectedWeek)
-          .eq('part_name', activeTab));
-      } else {
-        ({ error } = await supabase
-          .from('weekly_reports')
-          .insert(payload));
-      }
-
-      if (error) {
-        console.error('Save error:', error);
-        setToast('저장 실패: ' + (error.message || JSON.stringify(error)));
-        setSaveState('error');
-      } else {
-        setSaveState('saved');
-      }
+      await dbCall('save', {
+        week_id: selectedWeek,
+        part_name: activeTab,
+        prev_work: fromItems(reportData.prev_work),
+        curr_work: fromItems(reportData.curr_work),
+        next_work: fromItems(reportData.next_work),
+        ax_case: reportData.ax_case,
+        notices: reportData.notices,
+      });
+      setSaveState('saved');
     } catch(e) {
-      console.error('Save exception:', e);
-      setToast('저장 오류: ' + e.message);
+      console.error('Save error:', e);
+      setToast('저장 실패: ' + e.message);
       setSaveState('error');
     }
     setTimeout(()=>setSaveState('idle'), 2500);
   };
 
-  const handleCarryOver = () => {
+    const handleCarryOver = () => {
     if(!reportData.curr_work.length){setToast('금주 진행 사항이 없습니다.');return;}
     if(!window.confirm('금주 진행 내용을 전주 실적으로 이관하고 금주를 초기화할까요?')) return;
     setReportData(p=>({...p,prev_work:[...p.curr_work],curr_work:[]}));
