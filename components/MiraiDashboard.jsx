@@ -819,15 +819,49 @@ export default function MiraiDashboard() {
 
   const handleSave = async () => {
     setSaveState('saving');
+    const payload = {
+      week_id: selectedWeek,
+      part_name: activeTab,
+      prev_work: fromItems(reportData.prev_work),
+      curr_work: fromItems(reportData.curr_work),
+      next_work: fromItems(reportData.next_work),
+      ax_case: reportData.ax_case,
+      notices: reportData.notices,
+    };
     try {
-      const {error}=await supabase.from('weekly_reports').upsert({
-        week_id:selectedWeek,part_name:activeTab,
-        prev_work:fromItems(reportData.prev_work),curr_work:fromItems(reportData.curr_work),
-        next_work:fromItems(reportData.next_work),ax_case:reportData.ax_case,notices:reportData.notices,
-      },{onConflict:'week_id,part_name'});
-      setSaveState(error?'error':'saved');
-    } catch { setSaveState('error'); }
-    setTimeout(()=>setSaveState('idle'),2500);
+      const { data: existing } = await supabase
+        .from('weekly_reports')
+        .select('id')
+        .eq('week_id', selectedWeek)
+        .eq('part_name', activeTab)
+        .maybeSingle();
+
+      let error;
+      if (existing) {
+        ({ error } = await supabase
+          .from('weekly_reports')
+          .update(payload)
+          .eq('week_id', selectedWeek)
+          .eq('part_name', activeTab));
+      } else {
+        ({ error } = await supabase
+          .from('weekly_reports')
+          .insert(payload));
+      }
+
+      if (error) {
+        console.error('Save error:', error);
+        setToast('저장 실패: ' + (error.message || JSON.stringify(error)));
+        setSaveState('error');
+      } else {
+        setSaveState('saved');
+      }
+    } catch(e) {
+      console.error('Save exception:', e);
+      setToast('저장 오류: ' + e.message);
+      setSaveState('error');
+    }
+    setTimeout(()=>setSaveState('idle'), 2500);
   };
 
   const handleCarryOver = () => {
