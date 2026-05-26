@@ -523,6 +523,115 @@ const Toast = ({msg,type='success',onClose}) => {
   );
 };
 
+// ─── AllPartSection (파트별 독립 로드/저장 섹션) ─────────────────────────────
+const AllPartSection = ({ part, selectedWeek, analysis, onAnalyzeRequest }) => {
+  const [data, setData]       = useState({ prev_work:[], curr_work:[], next_work:[] });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  const COLOR_MAP = { '인사':'#2563EB', '총무':'#059669', '직속':'#D97706' };
+  const partColor = COLOR_MAP[part] || '#2563EB';
+
+  // 이 파트 데이터 로드
+  useEffect(() => {
+    if (!selectedWeek) return;
+    async function load() {
+      setLoading(true);
+      try {
+        const { data: row } = await dbCall('load', { week_id: selectedWeek, part_name: part });
+        if (row) {
+          setData({ prev_work: toItems(row.prev_work), curr_work: toItems(row.curr_work), next_work: toItems(row.next_work) });
+        } else {
+          setData({ prev_work:[], curr_work:[], next_work:[] });
+        }
+      } catch(e) { console.error(e); }
+      setLoading(false);
+    }
+    load();
+  }, [selectedWeek, part]);
+
+  // 이 파트 저장
+  const save = async () => {
+    setSaving(true);
+    try {
+      await dbCall('save', {
+        week_id: selectedWeek, part_name: part,
+        prev_work: fromItems(data.prev_work), curr_work: fromItems(data.curr_work),
+        next_work: fromItems(data.next_work), ax_case: '', notices: '',
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch(e) { console.error(e); }
+    setSaving(false);
+  };
+
+  const patch = (field) => (updater) =>
+    setData(p => ({ ...p, [field]: typeof updater === 'function' ? updater(p[field]) : updater }));
+
+  const totalItems = data.prev_work.length + data.curr_work.length + data.next_work.length;
+  const doneCount  = [...data.prev_work,...data.curr_work,...data.next_work].filter(i=>i.status==='완료').length;
+  const delayCount = [...data.prev_work,...data.curr_work,...data.next_work].filter(i=>i.status==='지연').length;
+
+  return (
+    <div style={{ marginBottom:24 }}>
+      {/* 파트 섹션 헤더 */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+        <button onClick={() => setExpanded(e => !e)}
+          style={{ display:'flex', alignItems:'center', gap:10, background:'transparent', border:'none', cursor:'pointer', padding:0 }}>
+          <div style={{ width:8, height:8, borderRadius:'50%', background:partColor }} />
+          <span style={{ fontSize:17, fontWeight:800, color:T.t1 }}>{part} 파트</span>
+          {totalItems > 0 && (
+            <span style={{ fontSize:12, color:T.t3, fontWeight:500 }}>
+              총 {totalItems}건{doneCount>0?` · 완료 ${doneCount}`:''}
+              {delayCount>0&&<span style={{color:'#DC2626'}}> · 지연 {delayCount}</span>}
+            </span>
+          )}
+          <ChevronRight size={15} color={T.t3} style={{ transform: expanded?'rotate(90deg)':'rotate(0)', transition:'transform 0.2s' }}/>
+        </button>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          {saved && <span style={{ fontSize:12, fontWeight:700, color:'#059669' }}>저장됨 ✓</span>}
+          <button onClick={save} disabled={saving}
+            style={{ display:'flex', alignItems:'center', gap:5, padding:'6px 14px', borderRadius:8, border:`1px solid ${partColor}44`,
+              background:`${partColor}10`, color:partColor, fontSize:12, fontWeight:700, cursor:'pointer', transition:'all 0.15s' }}
+            onMouseEnter={e=>{ e.currentTarget.style.background=`${partColor}1e`; }}
+            onMouseLeave={e=>{ e.currentTarget.style.background=`${partColor}10`; }}>
+            <Save size={13}/>{saving?'저장 중...':'저장'}
+          </button>
+        </div>
+      </div>
+
+      {/* 구분선 */}
+      <div style={{ height:1, background:`linear-gradient(90deg, ${partColor}44, transparent)`, marginBottom:14 }}/>
+
+      {/* 업무 카드들 */}
+      {expanded && (
+        loading ? (
+          <div style={{ display:'flex', alignItems:'center', gap:8, color:T.t3, fontSize:13, padding:'20px 0' }}>
+            <RefreshCw size={15} className="animate-spin"/>{part} 파트 데이터 로드 중...
+          </div>
+        ) : (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
+            {['prev','curr','next'].map(k => (
+              <WorkCard key={k} cardKey={k}
+                items={data[`${k}_work`]}
+                onItemsChange={patch(`${k}_work`)}
+                onCarryOver={k==='curr' ? () => {
+                  if(!data.curr_work.length) return;
+                  if(!confirm('금주 진행 내용을 전주 실적으로 이관할까요?')) return;
+                  setData(p => ({ ...p, prev_work:[...p.curr_work], curr_work:[] }));
+                } : undefined}
+                analysisData={analysis?.[`${k}_work`] || []}
+              />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+};
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function MiraiDashboard() {
   const [weeks,setWeeks]               = useState([]);
@@ -671,7 +780,7 @@ export default function MiraiDashboard() {
               <Calendar size={12} color="#2563EB"/>
               <span style={{fontSize:12,color:T.t2,fontFamily:'JetBrains Mono,monospace'}}>{selectedWeek||'—'}</span>
               <span style={{color:'#D1D5DB'}}>·</span>
-              <span style={{fontSize:12,color:T.t2}}>{activeTab} 파트</span>
+              <span style={{fontSize:12,color:T.t2}}>인사 · 총무 · 직속 파트</span>
               <span style={{fontSize:11,padding:'2px 7px',borderRadius:5,background:online?'#ECFDF5':'#FEF2F2',color:online?'#059669':'#DC2626',fontWeight:700,marginLeft:4}}>
                 {online?'연결됨':'오프라인'}
               </span>
@@ -704,21 +813,15 @@ export default function MiraiDashboard() {
         {/* 바디 */}
         <div style={{flex:1,overflowY:'auto',padding:'24px 28px'}}>
 
-          {/* ── 보고서 ── */}
+          {/* ── 보고서 — 전체 파트 동시 표시 ── */}
           {viewMode==='report'&&(
             <>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:22}}>
-                <SegmentControl options={PARTS.map(p=>p+' 파트')} value={activeTab+' 파트'} onChange={v=>setActiveTab(v.replace(' 파트',''))}/>
-                <span style={{fontSize:12,color:T.t3,fontFamily:'JetBrains Mono,monospace'}}>{selectedWeek}</span>
-              </div>
               {loading?<LoadingState/>:(
                 <>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:18,marginBottom:18}}>
-                    {['prev','curr','next'].map(k=>(
-                      <WorkCard key={k} cardKey={k} items={reportData[`${k}_work`]} onItemsChange={patch(`${k}_work`)} onCarryOver={k==='curr'?handleCarryOver:undefined} analysisData={analysis?.[`${k}_work`]||[]}/>
-                    ))}
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:18}}>
+                  {PARTS.map(part=>(
+                    <AllPartSection key={part} part={part} selectedWeek={selectedWeek} analysis={part===activeTab?analysis:null} onAnalyzeRequest={()=>{setActiveTab(part);handleAnalyze();}}/>
+                  ))}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:18,marginTop:18}}>
                     {[
                       {f:'ax_case',icon:<Sparkles size={16} color="#7C3AED"/>,label:'AX 사례 공유',sub:'AI 혁신 적용 내용',c:'#7C3AED',bg:'#F5F3FF',b:'#DDD6FE',ph:'이번 주 AX 적용 사례를 기록해 주세요...'},
                       {f:'notices',icon:<Megaphone size={16} color="#DC2626"/>,label:'파트 공지 사항',sub:'팀원 공유 필수 사항',c:'#DC2626',bg:'#FEF2F2',b:'#FECACA',ph:'팀원들에게 전달할 공지 사항을 입력해 주세요...'},
@@ -732,7 +835,6 @@ export default function MiraiDashboard() {
                             <div style={{fontSize:15,fontWeight:700,color:T.t1}}>{label}</div>
                             <div style={{fontSize:11,color:T.t3,marginTop:2}}>{sub}</div>
                           </div>
-                          <span style={{fontSize:11,color:T.t4,fontFamily:'JetBrains Mono,monospace'}}>{(reportData[f]||'').length}자</span>
                         </div>
                         <textarea value={reportData[f]||''} onChange={e=>setReportData(p=>({...p,[f]:e.target.value}))} placeholder={ph} style={{width:'100%',background:'#FAFAFA',border:'1px solid rgba(0,0,0,0.07)',borderRadius:10,padding:'10px 12px',color:T.t1,fontSize:14,lineHeight:1.7,resize:'none',height:100,outline:'none',fontFamily:'inherit',boxSizing:'border-box',transition:'border-color 0.15s'}}
                           onFocus={e=>e.target.style.borderColor=b} onBlur={e=>e.target.style.borderColor='rgba(0,0,0,0.07)'}/>
@@ -742,49 +844,6 @@ export default function MiraiDashboard() {
                       </div>
                     ))}
                   </div>
-
-                  {/* AI 패널 */}
-                  {showAI&&(
-                    <div style={{marginTop:18,background:'#fff',border:'1px solid #DDD6FE',borderRadius:18,overflow:'hidden',boxShadow:'0 4px 20px rgba(124,58,237,0.08)',animation:'fadeUp 0.2s ease'}}>
-                      <div style={{padding:'14px 22px',borderBottom:'1px solid rgba(0,0,0,0.07)',background:'#F5F3FF',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <span style={{fontSize:14,fontWeight:800,color:'#7C3AED',display:'flex',alignItems:'center',gap:7}}><Bot size={16}/> AI 보고서 분석 — {activeTab} 파트</span>
-                        <IconBtn icon={<X size={14}/>} onClick={()=>setShowAI(false)} color="#6B7280"/>
-                      </div>
-                      <div style={{padding:22}}>
-                        {aiLoading?(
-                          <div style={{display:'flex',alignItems:'center',gap:10,color:T.t3,fontSize:14}}>
-                            <RefreshCw size={17} className="animate-spin" style={{color:'#7C3AED'}}/>Claude가 보고서를 분석 중입니다...
-                          </div>
-                        ):analysis&&(
-                          <>
-                            {analysis.summary&&<div style={{padding:'14px 18px',borderRadius:12,background:'#F5F3FF',border:'1px solid #DDD6FE',fontSize:14,color:'#6D28D9',lineHeight:1.7,marginBottom:18}}>{analysis.summary}</div>}
-                            {['prev_work','curr_work','next_work'].map(key=>{
-                              const items=(analysis[key]||[]).filter(x=>x.flags?.length);
-                              if(!items.length)return null;
-                              const label={prev_work:'전주 실적',curr_work:'금주 진행',next_work:'차주 예정'}[key];
-                              return(
-                                <div key={key} style={{marginBottom:16}}>
-                                  <div style={{fontSize:11,fontWeight:700,color:T.t3,marginBottom:10,letterSpacing:'0.1em',textTransform:'uppercase'}}>{label}</div>
-                                  {items.map(item=>(
-                                    <div key={item.index} style={{padding:'12px 16px',borderRadius:12,background:'#F9FAFB',border:'1px solid rgba(0,0,0,0.08)',marginBottom:8}}>
-                                      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:6}}>
-                                        {(item.flags||[]).map(f=>(
-                                          <span key={f} style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 9px',borderRadius:6,fontSize:11,fontWeight:700,color:f==='트래킹 누락'?'#DC2626':'#D97706',background:f==='트래킹 누락'?'#FEF2F2':'#FFFBEB',border:`1px solid ${f==='트래킹 누락'?'#FECACA':'#FCD34D'}`}}>
-                                            {f==='트래킹 누락'?<AlertTriangle size={9}/>:<Zap size={9}/>}{f}
-                                          </span>
-                                        ))}
-                                      </div>
-                                      {item.comment&&<div style={{fontSize:13,color:T.t2,lineHeight:1.6}}>{item.comment}</div>}
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </>
               )}
             </>
