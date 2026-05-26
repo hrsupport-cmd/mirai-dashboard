@@ -614,7 +614,7 @@ export default function MiraiDashboard() {
             </div>
             <div>
               <div style={{fontSize:14,fontWeight:800,color:T.t1,letterSpacing:'-0.2px',lineHeight:1.1}}>미래인재실</div>
-              <div style={{fontSize:11,color:T.t3,marginTop:3,fontWeight:500}}>주간업무 보고 시스템</div>
+              
             </div>
           </div>
         </div>
