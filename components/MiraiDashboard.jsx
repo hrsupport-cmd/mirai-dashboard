@@ -360,15 +360,66 @@ const KanbanBoard = ({allData}) => {
 
 // ─── GlobalView ───────────────────────────────────────────────────────────────
 const GlobalView = () => {
-  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);const [sf,setSf]=useState('전체');const [pf,setPf]=useState('전체');const [kw,setKw]=useState('');
-  useEffect(()=>{async function load(){setLoading(true);try{const {data}=await dbCall('load_global');setRows(data||[]);}catch(e){console.error(e);}setLoading(false);}load();},[]);
+  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);
+  const [sf,setSf]=useState('전체');const [pf,setPf]=useState('전체');const [kw,setKw]=useState('');
+  const [startDate,setStartDate]=useState('');const [endDate,setEndDate]=useState('');const [dateSearched,setDateSearched]=useState(false);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try{const {data}=await dbCall('load_global');setRows(data||[]);}
+    catch(e){console.error(e);}
+    setLoading(false);setDateSearched(false);
+  };
+  const loadByRange = async () => {
+    if(!startDate||!endDate)return;
+    setLoading(true);
+    try{
+      const ids=weekIdsInRange(startDate,endDate);
+      const {data}=await dbCall('search',{week_ids:ids});
+      setRows(data||[]);setDateSearched(true);
+    }catch(e){console.error(e);}
+    setLoading(false);
+  };
+  useEffect(()=>{loadAll();},[]);
   const flat=useMemo(()=>{const r=[];rows.forEach(row=>{['prev_work','curr_work','next_work'].forEach(k=>{toItems(row[k]).forEach(item=>{r.push({...item,week_id:row.week_id,part:row.part_name,cardLabel:CARD[k.replace('_work','')]?.label,cardKey:k.replace('_work','')});});});});return r;},[rows]);
   const filtered=useMemo(()=>flat.filter(i=>{if(sf!=='전체'&&i.status!==sf)return false;if(pf!=='전체'&&i.part!==pf)return false;if(kw&&!i.text.toLowerCase().includes(kw.toLowerCase()))return false;return true;}),[flat,sf,pf,kw]);
   const counts=useMemo(()=>{const r={};STATUS_KEYS.forEach(s=>{r[s]=flat.filter(i=>i.status===s).length;});return r;},[flat]);
   if(loading)return <Loading/>;
   return(
     <div>
-      <SecHdr icon={<Globe size={17} color="#2563EB"/>} title="전체 업무 보기" sub={`주차 무관 · 전체 ${flat.length}건`}/>
+      <SecHdr icon={<Globe size={17} color="#2563EB"/>} title="전체 업무 보기" sub={dateSearched?`기간 검색 결과 · ${flat.length}건`:`전체 ${flat.length}건`}/>
+
+      {/* 기간 검색 */}
+      <div style={{background:'#fff',border:'1px solid rgba(0,0,0,0.08)',borderRadius:14,padding:'16px 20px',marginBottom:18,boxShadow:'0 1px 4px rgba(0,0,0,0.05)'}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.t1,marginBottom:12,display:'flex',alignItems:'center',gap:7}}><Search size={14} color="#2563EB"/>기간별 검색</div>
+        <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:T.t3,marginBottom:5}}>시작일</div>
+            <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={{background:'#F9FAFB',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,padding:'8px 12px',color:T.t1,fontSize:13,outline:'none',fontFamily:'inherit'}}/>
+          </div>
+          <span style={{color:'#D1D5DB',paddingBottom:8,fontSize:16}}>—</span>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:T.t3,marginBottom:5}}>종료일</div>
+            <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={{background:'#F9FAFB',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,padding:'8px 12px',color:T.t1,fontSize:13,outline:'none',fontFamily:'inherit'}}/>
+          </div>
+          <button onClick={loadByRange} disabled={!startDate||!endDate||loading}
+            style={{padding:'9px 20px',borderRadius:9,border:'none',background:(!startDate||!endDate)?'#F3F4F6':'#2563EB',color:(!startDate||!endDate)?'#9CA3AF':'#fff',fontSize:13,fontWeight:700,cursor:(!startDate||!endDate)?'not-allowed':'pointer',display:'flex',alignItems:'center',gap:6,transition:'all 0.15s',boxShadow:(!startDate||!endDate)?'none':'0 2px 10px rgba(37,99,235,0.25)'}}>
+            {loading?<RefreshCw size={13} style={{animation:'spin 1s linear infinite'}}/>:<Search size={13}/>}
+            검색
+          </button>
+          {dateSearched&&(
+            <button onClick={loadAll} style={{padding:'9px 16px',borderRadius:9,border:'1px solid rgba(0,0,0,0.1)',background:'transparent',color:T.t2,fontSize:13,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:5,transition:'all 0.15s'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#F9FAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <X size={13}/>전체 보기
+            </button>
+          )}
+        </div>
+        {dateSearched&&rows.length>0&&(
+          <div style={{marginTop:10,padding:'7px 12px',background:'#EFF6FF',border:'1px solid #BFDBFE',borderRadius:8,fontSize:12,color:'#2563EB',display:'flex',alignItems:'center',gap:6}}>
+            <Calendar size={13}/>{startDate} — {endDate} 기간 · {rows.length}개 주차에서 {flat.length}건 검색됨
+          </div>
+        )}
+      </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:20}}>
         {STATUS_KEYS.map(s=>{const c=STATUS[s];const active=sf===s;return(
           <button key={s} onClick={()=>setSf(p=>p===s?'전체':s)} style={{background:active?c.bg:'#fff',border:`1px solid ${active?c.border:'rgba(0,0,0,0.08)'}`,borderRadius:14,padding:'16px 20px',cursor:'pointer',textAlign:'left',transition:'all 0.18s',boxShadow:active?`0 2px 12px ${c.color}22`:'0 1px 3px rgba(0,0,0,0.04)'}}>
