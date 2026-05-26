@@ -1,401 +1,583 @@
 'use client';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  LayoutDashboard, Sparkles, Megaphone, Calendar, ChevronRight,
-  Save, Clock, CheckCircle2, Pencil, Trash2, Plus, X, Check,
-  Wifi, WifiOff, RefreshCw, ChevronDown, BarChart3, LayoutGrid,
-  FileText, Info, Search, AlertTriangle, Zap, PlusCircle, Bot,
-  GitBranch, TrendingUp, ArrowRight, HelpCircle
+  LayoutDashboard, FileText, BarChart3, LayoutGrid, Globe, Search,
+  Save, Plus, X, Check, ChevronRight, ChevronDown, ArrowRight,
+  Calendar, Clock, CheckCircle2, AlertTriangle, TrendingUp,
+  Pencil, Trash2, Bot, Wifi, WifiOff, RefreshCw, PlusCircle,
+  Info, Megaphone, Sparkles, Filter, Zap, Activity,
+  MoreHorizontal, Copy, Eye, Bell, Settings,
 } from 'lucide-react';
 
-const PARTS = ["인사", "총무", "직속"];
-const STATUS_KEYS = ["완료", "진행중", "예정", "지연"];
-
-// ── 대비 대폭 개선된 컬러 시스템 ──────────────────────────────────────────
-const COLOR = {
-  bg:       '#07090f',
-  surface:  '#0f1623',
-  elevated: '#141e2e',
-  border:   'rgba(255,255,255,0.12)',
-  borderHover: 'rgba(255,255,255,0.22)',
-  text:     '#f0f4f8',        // 메인 텍스트 (밝게)
-  textSub:  '#b8c4d4',        // 보조 텍스트
-  textMute: '#7a90a8',        // 흐린 텍스트
-  textDim:  '#4a6070',        // 매우 흐린
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const T = {
+  bg:      'var(--bg)',
+  surface: 'var(--surface)',
+  card:    'var(--card)',
+  el:      'var(--elevated)',
+  b:       'var(--border)',
+  bm:      'var(--border-md)',
+  bl:      'var(--border-lg)',
+  t1:      'var(--text-1)',
+  t2:      'var(--text-2)',
+  t3:      'var(--text-3)',
+  t4:      'var(--text-4)',
 };
 
-const STATUS_CFG = {
-  완료:   { color: '#4ade80', bg: 'rgba(74,222,128,0.15)',  border: 'rgba(74,222,128,0.35)'  },
-  진행중: { color: '#fbbf24', bg: 'rgba(251,191,36,0.15)',  border: 'rgba(251,191,36,0.35)'  },
-  예정:   { color: '#60a5fa', bg: 'rgba(96,165,250,0.15)',  border: 'rgba(96,165,250,0.35)'  },
-  지연:   { color: '#f87171', bg: 'rgba(248,113,113,0.15)', border: 'rgba(248,113,113,0.35)' },
-};
-const CARD_CFG = {
-  prev: { label:'전주 실적', color:'#60a5fa', bg:'rgba(96,165,250,0.1)',  border:'rgba(96,165,250,0.25)'  },
-  curr: { label:'금주 진행', color:'#fbbf24', bg:'rgba(251,191,36,0.1)',  border:'rgba(251,191,36,0.25)'  },
-  next: { label:'차주 예정', color:'#4ade80', bg:'rgba(74,222,128,0.1)',  border:'rgba(74,222,128,0.25)'  },
-};
-const FLAG_CFG = {
-  '트래킹 누락': { color:'#f87171', bg:'rgba(248,113,113,0.12)', border:'rgba(248,113,113,0.3)' },
-  '구체성 부족': { color:'#fbbf24', bg:'rgba(251,191,36,0.12)',  border:'rgba(251,191,36,0.3)'  },
+const STATUS = {
+  완료:   { color:'#34d399', glow:'rgba(52,211,153,0.2)',  bg:'rgba(52,211,153,0.1)',  border:'rgba(52,211,153,0.3)',  icon:CheckCircle2 },
+  진행중: { color:'#fbbf24', glow:'rgba(251,191,36,0.2)',  bg:'rgba(251,191,36,0.1)',  border:'rgba(251,191,36,0.3)',  icon:Clock         },
+  예정:   { color:'#60a5fa', glow:'rgba(96,165,250,0.2)',  bg:'rgba(96,165,250,0.1)',  border:'rgba(96,165,250,0.3)',  icon:Calendar      },
+  지연:   { color:'#f87171', glow:'rgba(248,113,113,0.2)', bg:'rgba(248,113,113,0.1)', border:'rgba(248,113,113,0.3)', icon:AlertTriangle },
 };
 
-const genId = () => Math.random().toString(36).slice(2,9);
+const CARD = {
+  prev: { label:'전주 실적', color:'#60a5fa', bg:'rgba(96,165,250,0.08)',  border:'rgba(96,165,250,0.2)',  icon:CheckCircle2 },
+  curr: { label:'금주 진행', color:'#fbbf24', bg:'rgba(251,191,36,0.08)',  border:'rgba(251,191,36,0.2)',  icon:Clock         },
+  next: { label:'차주 예정', color:'#34d399', bg:'rgba(52,211,153,0.08)',  border:'rgba(52,211,153,0.2)',  icon:Calendar      },
+};
+
+const PARTS        = ['인사', '총무', '직속'];
+const STATUS_KEYS  = ['완료', '진행중', '예정', '지연'];
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+const genId = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+
 const toItems = arr => {
-  if (!Array.isArray(arr)||!arr.length) return [];
-  return arr.map(i => typeof i==='string'
-    ? {id:genId(),text:i,status:'진행중'}
-    : {id:genId(),text:i.text||'',status:i.status||'진행중'});
+  if (!Array.isArray(arr) || !arr.length) return [];
+  return arr.map(i => typeof i === 'string'
+    ? { id: genId(), text: i, status: '진행중' }
+    : { id: genId(), text: i.text || '', status: i.status || '진행중' });
 };
-const fromItems = items => items.map(({text,status})=>({text,status}));
+const fromItems = items => items.map(({ text, status }) => ({ text, status }));
 
-function dateToWeekId(date) {
-  const d = new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-W${Math.ceil(d.getDate()/7)}`;
-}
-function weekIdToRange(w) {
+const dateToWeekId = d => {
+  const dt = new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-W${Math.ceil(dt.getDate()/7)}`;
+};
+const weekIdToRange = w => {
   const m = w.match(/(\d{4})-(\d{2})-W(\d)/);
   if (!m) return w;
-  const s = (parseInt(m[3])-1)*7+1;
-  return `${m[1]}.${m[2]}.${String(s).padStart(2,'0')}~${m[1]}.${m[2]}.${String(Math.min(s+6,31)).padStart(2,'0')}`;
-}
-function weekIdsInRange(s,e) {
-  const ids=new Set(); const end=new Date(e); const cur=new Date(s);
+  const s = (parseInt(m[3])-1)*7+1, e = Math.min(s+6,31);
+  return `${m[1]}.${m[2]}.${String(s).padStart(2,'0')} — ${m[1]}.${m[2]}.${String(e).padStart(2,'0')}`;
+};
+const weekIdsInRange = (s, e) => {
+  const ids=new Set(), end=new Date(e), cur=new Date(s);
   cur.setDate(cur.getDate()-(cur.getDay()===0?6:cur.getDay()-1));
-  while(cur<=end){ids.add(dateToWeekId(cur));cur.setDate(cur.getDate()+7);}
+  while(cur<=end){ ids.add(dateToWeekId(cur)); cur.setDate(cur.getDate()+7); }
   return Array.from(ids).sort();
-}
+};
 
-async function dbCall(action,payload={}) {
-  const res = await fetch('/api/db',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,payload})});
+const dbCall = async (action, payload={}) => {
+  const res = await fetch('/api/db', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action,payload}),
+  });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
   return json;
-}
-
-const S = {
-  card: { background:COLOR.surface, border:`1px solid ${COLOR.border}`, borderRadius:16, padding:20 },
-  iconBtn: { background:'transparent', border:'none', cursor:'pointer', color:COLOR.textMute, padding:4, borderRadius:6, display:'flex', alignItems:'center', transition:'color 0.15s' },
 };
 
-// ── StatusTag ─────────────────────────────────────────────────────────────────
-const SICONS = {완료:CheckCircle2,진행중:Clock,예정:Calendar,지연:AlertTriangle};
-function StatusTag({status,onChange}) {
-  const [open,setOpen]=useState(false);
-  const ref=useRef(null);
-  const cfg=STATUS_CFG[status]||STATUS_CFG['진행중'];
-  const Icon=SICONS[status]||Clock;
-  useEffect(()=>{
-    if(!open)return;
-    const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
-    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
-  },[open]);
+const EMPTY = () => ({ prev_work:[], curr_work:[], next_work:[], ax_case:'', notices:'' });
+
+// ─── Primitive Components ─────────────────────────────────────────────────────
+const Badge = ({ status, size='sm' }) => {
+  const s = STATUS[status] || STATUS['진행중'];
+  const Icon = s.icon;
+  const p = size === 'sm' ? '3px 9px' : '4px 12px';
+  const fs = size === 'sm' ? 10 : 11;
   return (
-    <div ref={ref} style={{position:'relative',display:'inline-block'}}>
-      <button onClick={e=>{e.stopPropagation();onChange&&setOpen(o=>!o);}}
-        style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 9px',borderRadius:6,
-          border:`1px solid ${cfg.border}`,background:cfg.bg,color:cfg.color,
-          fontSize:10,fontWeight:800,cursor:onChange?'pointer':'default',whiteSpace:'nowrap'}}>
-        <Icon size={9}/>{status}{onChange&&<ChevronDown size={8}/>}
+    <span style={{
+      display:'inline-flex', alignItems:'center', gap:4, padding:p,
+      borderRadius:20, border:`1px solid ${s.border}`, background:s.bg,
+      color:s.color, fontSize:fs, fontWeight:700, whiteSpace:'nowrap', letterSpacing:'0.01em',
+    }}>
+      <Icon size={fs-1}/>{status}
+    </span>
+  );
+};
+
+const Pill = ({ label, color='#60a5fa', active }) => (
+  <span style={{
+    display:'inline-flex', alignItems:'center', padding:'2px 8px',
+    borderRadius:999, fontSize:10, fontWeight:600,
+    background: active ? `${color}22` : 'transparent',
+    border: active ? `1px solid ${color}44` : `1px solid ${T.b}`,
+    color: active ? color : T.t3,
+    transition:'all 0.15s',
+  }}>{label}</span>
+);
+
+// ─── StatusDropdown ───────────────────────────────────────────────────────────
+const StatusDropdown = ({ status, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const s = STATUS[status] || STATUS['진행중'];
+  const Icon = s.icon;
+  return (
+    <div ref={ref} style={{ position:'relative', display:'inline-block', flexShrink:0 }}>
+      <button
+        onClick={e => { e.stopPropagation(); onChange && setOpen(o => !o); }}
+        style={{
+          display:'inline-flex', alignItems:'center', gap:4, padding:'3px 9px',
+          borderRadius:20, border:`1px solid ${s.border}`, background:s.bg,
+          color:s.color, fontSize:10, fontWeight:700, cursor:onChange?'pointer':'default',
+          whiteSpace:'nowrap', transition:'all 0.15s',
+        }}
+        onMouseEnter={e => { if(onChange) e.currentTarget.style.background = s.glow; }}
+        onMouseLeave={e => { e.currentTarget.style.background = s.bg; }}
+      >
+        <Icon size={9}/>{status}{onChange && <ChevronDown size={8}/>}
       </button>
-      {open&&(
-        <div style={{position:'absolute',top:'110%',left:0,zIndex:999,background:COLOR.elevated,
-          border:`1px solid ${COLOR.border}`,borderRadius:10,overflow:'hidden',
-          boxShadow:'0 8px 32px rgba(0,0,0,0.6)',width:96}}>
-          {STATUS_KEYS.map(s=>{const c=STATUS_CFG[s];const Ic=SICONS[s]||Clock;return(
-            <button key={s} onClick={e=>{e.stopPropagation();onChange(s);setOpen(false);}}
-              style={{width:'100%',textAlign:'left',padding:'9px 12px',fontSize:11,fontWeight:700,
-                color:c.color,background:'transparent',border:'none',cursor:'pointer',
-                display:'flex',alignItems:'center',gap:7}}
-              onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.07)'}
-              onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <Ic size={10}/>{s}
-            </button>
-          );})}
+      {open && (
+        <div style={{
+          position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:9999,
+          background:T.el, border:`1px solid ${T.bm}`, borderRadius:12,
+          overflow:'hidden', boxShadow:'0 16px 48px rgba(0,0,0,0.6)', width:112,
+          animation:'fadeUp 0.15s ease',
+        }}>
+          {STATUS_KEYS.map(k => {
+            const c = STATUS[k]; const Ic = c.icon;
+            return (
+              <button key={k}
+                onClick={e => { e.stopPropagation(); onChange(k); setOpen(false); }}
+                style={{
+                  width:'100%', textAlign:'left', padding:'10px 14px',
+                  fontSize:12, fontWeight:600, color:c.color, background:'transparent',
+                  border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:8,
+                  transition:'background 0.1s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.06)'}
+                onMouseLeave={e => e.currentTarget.style.background='transparent'}
+              >
+                <Ic size={12}/>{k}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
   );
-}
+};
 
-// ── FlagBadge ─────────────────────────────────────────────────────────────────
-function FlagBadge({flag,comment}) {
-  const [hov,setHov]=useState(false);
-  const cfg=FLAG_CFG[flag]; if(!cfg)return null;
-  const Icon=flag==='트래킹 누락'?GitBranch:Zap;
-  return (
-    <div style={{position:'relative',display:'inline-block'}} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      <span style={{display:'inline-flex',alignItems:'center',gap:3,padding:'2px 7px',borderRadius:5,
-        fontSize:9,fontWeight:800,background:cfg.bg,border:`1px solid ${cfg.border}`,color:cfg.color,cursor:'default'}}>
-        <Icon size={8}/>{flag}
-      </span>
-      {hov&&comment&&(
-        <div style={{position:'absolute',bottom:'120%',left:0,zIndex:1000,background:COLOR.elevated,
-          border:`1px solid ${COLOR.border}`,borderRadius:10,padding:'8px 12px',fontSize:11,
-          color:COLOR.textSub,boxShadow:'0 8px 24px rgba(0,0,0,0.6)',maxWidth:260,lineHeight:1.6,whiteSpace:'normal'}}>
-          {comment}
-        </div>
-      )}
-    </div>
-  );
-}
+// ─── WorkItem ─────────────────────────────────────────────────────────────────
+const WorkItem = ({ item, onUpdate, onDelete, flags=[], readOnly=false }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState(item.text);
+  const [hov, setHov]         = useState(false);
+  const inputRef              = useRef(null);
 
-// ── WorkItem ──────────────────────────────────────────────────────────────────
-function WorkItem({item,onUpdate,onDelete,flags=[]}) {
-  const [editing,setEditing]=useState(false);
-  const [draft,setDraft]=useState(item.text);
-  const [hov,setHov]=useState(false);
-  const ref=useRef(null);
-  useEffect(()=>{setDraft(item.text);},[item.text]);
-  useEffect(()=>{if(editing)ref.current?.focus();},[editing]);
-  const commit=()=>{
-    const t=draft.trim();
-    if(t&&t!==item.text)onUpdate({...item,text:t});
-    else if(!t)onDelete();
+  useEffect(() => { setDraft(item.text); }, [item.text]);
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  const commit = () => {
+    const t = draft.trim();
+    if (t && t !== item.text) onUpdate?.({ ...item, text: t });
+    else if (!t) onDelete?.();
     setEditing(false);
   };
+
   return (
-    <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'9px 0',
-      borderBottom:`1px solid rgba(255,255,255,0.07)`}}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      <div style={{flexShrink:0,marginTop:1}}>
-        <StatusTag status={item.status} onChange={s=>onUpdate({...item,status:s})}/>
-      </div>
-      <div style={{flex:1,minWidth:0}}>
-        {editing?(
-          <input ref={ref} value={draft} onChange={e=>setDraft(e.target.value)} onBlur={commit}
-            onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){setDraft(item.text);setEditing(false);}}}
-            style={{width:'100%',background:'rgba(255,255,255,0.08)',border:`1px solid rgba(96,165,250,0.5)`,
-              borderRadius:7,padding:'4px 8px',color:COLOR.text,fontSize:13,outline:'none'}}/>
-        ):(
-          <span onDoubleClick={()=>setEditing(true)} style={{display:'block',fontSize:13,
-            color:hov?COLOR.text:COLOR.textSub,lineHeight:1.55,cursor:'text',
-            wordBreak:'break-word',transition:'color 0.15s'}}>
+    <div
+      style={{
+        display:'flex', alignItems:'flex-start', gap:10, padding:'10px 0',
+        borderBottom:`1px solid rgba(255,255,255,0.06)`,
+        transition:'background 0.1s',
+      }}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+    >
+      <StatusDropdown
+        status={item.status}
+        onChange={readOnly ? null : s => onUpdate?.({ ...item, status: s })}
+      />
+
+      <div style={{ flex:1, minWidth:0 }}>
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key==='Enter') { e.preventDefault(); commit(); }
+              if (e.key==='Escape') { setDraft(item.text); setEditing(false); }
+            }}
+            style={{
+              width:'100%', background:'rgba(255,255,255,0.07)',
+              border:'1px solid rgba(96,165,250,0.5)', borderRadius:8,
+              padding:'5px 10px', color:T.t1, fontSize:13, outline:'none',
+              fontFamily:'inherit',
+            }}
+          />
+        ) : (
+          <span
+            onDoubleClick={() => !readOnly && setEditing(true)}
+            style={{
+              display:'block', fontSize:13, lineHeight:1.6,
+              color:hov ? T.t1 : T.t2, cursor:readOnly?'default':'text',
+              wordBreak:'break-word', transition:'color 0.15s',
+            }}
+          >
             {item.text}
           </span>
         )}
-        {flags.length>0&&(
-          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:5}}>
-            {flags.map((f,i)=><FlagBadge key={i} flag={f.flag} comment={f.comment}/>)}
-          </div>
-        )}
-      </div>
-      <div style={{display:'flex',gap:2,opacity:hov?1:0,transition:'opacity 0.15s',flexShrink:0}}>
-        <button onClick={()=>setEditing(true)} style={S.iconBtn}
-          onMouseEnter={e=>e.currentTarget.style.color='#60a5fa'}
-          onMouseLeave={e=>e.currentTarget.style.color=COLOR.textMute}><Pencil size={12}/></button>
-        <button onClick={onDelete} style={S.iconBtn}
-          onMouseEnter={e=>e.currentTarget.style.color='#f87171'}
-          onMouseLeave={e=>e.currentTarget.style.color=COLOR.textMute}><Trash2 size={12}/></button>
-      </div>
-    </div>
-  );
-}
-
-// ── AddRow ────────────────────────────────────────────────────────────────────
-function AddRow({onAdd}) {
-  const [active,setActive]=useState(false);
-  const [text,setText]=useState('');
-  const [status,setStatus]=useState('진행중');
-  const ref=useRef(null);
-  useEffect(()=>{if(active)ref.current?.focus();},[active]);
-  const commit=()=>{
-    if(text.trim()){onAdd({id:genId(),text:text.trim(),status});setText('');setStatus('진행중');}
-    setActive(false);
-  };
-  if(!active)return(
-    <button onClick={()=>setActive(true)}
-      style={{width:'100%',marginTop:10,padding:'8px 0',background:'transparent',
-        border:`1px dashed rgba(255,255,255,0.15)`,borderRadius:8,
-        color:COLOR.textMute,fontSize:12,cursor:'pointer',
-        display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'all 0.15s'}}
-      onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(96,165,250,0.5)';e.currentTarget.style.color='#60a5fa';e.currentTarget.style.background='rgba(96,165,250,0.05)';}}
-      onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.15)';e.currentTarget.style.color=COLOR.textMute;e.currentTarget.style.background='transparent';}}>
-      <Plus size={13}/>항목 추가 <span style={{fontSize:10,color:COLOR.textDim}}>Enter ↵</span>
-    </button>
-  );
-  return(
-    <div style={{marginTop:10,background:'rgba(255,255,255,0.05)',borderRadius:9,padding:10}}>
-      <input ref={ref} value={text} onChange={e=>setText(e.target.value)}
-        onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){setText('');setActive(false);}}}
-        placeholder="업무 내용 입력 후 Enter..."
-        style={{width:'100%',background:'rgba(255,255,255,0.08)',border:`1px solid rgba(96,165,250,0.4)`,
-          borderRadius:7,padding:'7px 10px',color:COLOR.text,fontSize:13,outline:'none',marginBottom:8,boxSizing:'border-box'}}/>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div style={{display:'flex',gap:3}}>
-          {STATUS_KEYS.map(s=>{const c=STATUS_CFG[s];return(
-            <button key={s} onClick={()=>setStatus(s)} style={{padding:'2px 8px',borderRadius:5,fontSize:10,fontWeight:700,cursor:'pointer',
-              border:`1px solid ${status===s?c.border:'rgba(255,255,255,0.15)'}`,
-              background:status===s?c.bg:'transparent',color:status===s?c.color:COLOR.textMute,transition:'all 0.12s'}}>
-              {s}
-            </button>
-          );})}
-        </div>
-        <div style={{display:'flex',gap:4}}>
-          <button onClick={()=>{setText('');setActive(false);}} style={S.iconBtn}><X size={13}/></button>
-          <button onClick={commit} style={{...S.iconBtn,color:'#60a5fa'}}><Check size={13}/></button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── WorkCard ──────────────────────────────────────────────────────────────────
-function WorkCard({cardKey,items,onItemsChange,onCarryOver,analysisData=[]}) {
-  const cfg=CARD_CFG[cardKey];
-  const done=items.filter(i=>i.status==='완료').length;
-  const delayed=items.filter(i=>i.status==='지연').length;
-  const pct=items.length?Math.round(done/items.length*100):0;
-  const upd=(id,u)=>onItemsChange(p=>p.map(i=>i.id===id?u:i));
-  const del=(id)=>onItemsChange(p=>p.filter(i=>i.id!==id));
-  const add=(item)=>onItemsChange(p=>[...p,item]);
-  const CIcon=cardKey==='prev'?CheckCircle2:cardKey==='curr'?Clock:Calendar;
-  return(
-    <div style={{...S.card,display:'flex',flexDirection:'column'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <div style={{padding:8,borderRadius:11,background:cfg.bg,border:`1px solid ${cfg.border}`}}>
-            <CIcon size={16} color={cfg.color}/>
-          </div>
-          <div>
-            <div style={{fontSize:14,fontWeight:700,color:COLOR.text}}>{cfg.label}</div>
-            <div style={{fontSize:10,color:COLOR.textMute,fontFamily:'monospace',marginTop:2}}>
-              {items.length}개 항목{items.length>0?` · 완료 ${pct}%`:''}
-              {delayed>0&&<span style={{color:'#f87171'}}> · 지연 {delayed}건</span>}
-            </div>
-          </div>
-        </div>
-        {cardKey==='curr'&&onCarryOver&&(
-          <button onClick={onCarryOver} title="금주→전주 이관"
-            style={{fontSize:10,fontWeight:700,padding:'4px 10px',borderRadius:7,
-              background:'rgba(255,255,255,0.06)',border:`1px solid ${COLOR.border}`,
-              color:COLOR.textSub,cursor:'pointer',transition:'all 0.15s',display:'flex',alignItems:'center',gap:4}}
-            onMouseEnter={e=>{e.currentTarget.style.color='#60a5fa';e.currentTarget.style.borderColor='rgba(96,165,250,0.4)';}}
-            onMouseLeave={e=>{e.currentTarget.style.color=COLOR.textSub;e.currentTarget.style.borderColor=COLOR.border;}}>
-            이관 <ArrowRight size={10}/>
-          </button>
-        )}
-      </div>
-      {items.length>0&&(
-        <div style={{display:'flex',height:4,background:'rgba(255,255,255,0.08)',borderRadius:4,marginBottom:12,overflow:'hidden',gap:1}}>
-          <div style={{width:`${pct}%`,background:'#4ade80',borderRadius:4,transition:'width 0.5s'}}/>
-          {delayed>0&&<div style={{width:`${Math.round(delayed/items.length*100)}%`,background:'#f87171',borderRadius:4}}/>}
-        </div>
-      )}
-      <div style={{flex:1}}>
-        {items.length===0&&(
-          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:80,color:COLOR.textDim,gap:4}}>
-            <BarChart3 size={20}/><span style={{fontSize:12}}>항목 없음</span>
-          </div>
-        )}
-        {items.map((item,idx)=>{
-          const itemFlags=analysisData.filter(a=>a.index===idx).flatMap(a=>(a.flags||[]).map(f=>({flag:f,comment:a.comment})));
-          return <WorkItem key={item.id} item={item} flags={itemFlags}
-            onUpdate={u=>upd(item.id,u)} onDelete={()=>del(item.id)}/>;
-        })}
-        <AddRow onAdd={add}/>
-      </div>
-    </div>
-  );
-}
-
-// ── HorizontalBarChart ────────────────────────────────────────────────────────
-function HorizontalBarChart({data,activePart}) {
-  const [sel,setSel]=useState(null);
-  const getItems=(cardKey)=>{
-    if(activePart&&activePart!=='전체') return data[activePart]?.[cardKey]||[];
-    return PARTS.flatMap(p=>(data[p]?.[cardKey]||[]).map(i=>({...i,part:p})));
-  };
-  const rows=[
-    {key:'prev_work',label:'전주 실적',color:'#60a5fa'},
-    {key:'curr_work',label:'금주 진행',color:'#fbbf24'},
-    {key:'next_work',label:'차주 예정',color:'#4ade80'},
-  ];
-  const filteredItems=sel?getItems(sel.cardKey).filter(i=>i.status===sel.status):[];
-  return(
-    <div>
-      <div style={{...S.card,marginBottom:14}}>
-        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
-          <div>
-            <div style={{fontSize:14,fontWeight:700,color:COLOR.text,display:'flex',alignItems:'center',gap:7}}>
-              <TrendingUp size={16} color="#60a5fa"/> 업무 달성 현황
-            </div>
-            <div style={{fontSize:11,color:COLOR.textMute,marginTop:3}}>색상 바 클릭 → 해당 업무 목록 표시</div>
-          </div>
-          <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
-            {[['완료','#4ade80'],['진행중','#fbbf24'],['예정','#60a5fa'],['지연','#f87171']].map(([l,c])=>(
-              <div key={l} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:COLOR.textSub}}>
-                <span style={{width:8,height:8,borderRadius:2,background:c}}/>{l}
-              </div>
+        {flags.length > 0 && (
+          <div style={{ display:'flex', gap:4, marginTop:5, flexWrap:'wrap' }}>
+            {flags.map((f,i) => (
+              <span key={i} style={{
+                display:'inline-flex', alignItems:'center', gap:3, padding:'2px 7px',
+                borderRadius:5, fontSize:9, fontWeight:700,
+                color: f.flag==='트래킹 누락' ? '#f87171' : '#fbbf24',
+                background: f.flag==='트래킹 누락' ? 'rgba(248,113,113,0.12)' : 'rgba(251,191,36,0.12)',
+                border: `1px solid ${f.flag==='트래킹 누락' ? 'rgba(248,113,113,0.3)' : 'rgba(251,191,36,0.3)'}`,
+              }}>
+                <AlertTriangle size={7}/>{f.flag}
+              </span>
             ))}
           </div>
+        )}
+      </div>
+
+      {!readOnly && (
+        <div style={{ display:'flex', gap:2, opacity:hov?1:0, transition:'opacity 0.15s', flexShrink:0 }}>
+          <IconBtn icon={<Pencil size={12}/>} onClick={() => setEditing(true)} hoverColor="#60a5fa"/>
+          <IconBtn icon={<Trash2 size={12}/>} onClick={onDelete} hoverColor="#f87171"/>
         </div>
-        {rows.map(row=>{
-          const items=getItems(row.key);
-          const total=items.length;
+      )}
+    </div>
+  );
+};
+
+const IconBtn = ({ icon, onClick, hoverColor='#60a5fa', title }) => {
+  const [hov, setHov] = useState(false);
+  return (
+    <button
+      onClick={onClick} title={title}
+      style={{
+        background:hov?`${hoverColor}18`:'transparent', border:`1px solid ${hov?`${hoverColor}44`:T.b}`,
+        color:hov?hoverColor:T.t3, padding:'5px', borderRadius:7, cursor:'pointer',
+        display:'flex', alignItems:'center', transition:'all 0.15s',
+      }}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+    >
+      {icon}
+    </button>
+  );
+};
+
+// ─── AddRow ───────────────────────────────────────────────────────────────────
+const AddRow = ({ onAdd }) => {
+  const [active, setActive] = useState(false);
+  const [text, setText]     = useState('');
+  const [status, setStatus] = useState('진행중');
+  const ref = useRef(null);
+
+  useEffect(() => { if (active) ref.current?.focus(); }, [active]);
+  const commit = () => {
+    if (text.trim()) { onAdd({ id:genId(), text:text.trim(), status }); setText(''); setStatus('진행중'); }
+    setActive(false);
+  };
+
+  if (!active) return (
+    <button
+      onClick={() => setActive(true)}
+      style={{
+        width:'100%', marginTop:10, padding:'8px 12px',
+        background:'transparent', border:`1px dashed rgba(255,255,255,0.1)`,
+        borderRadius:9, color:T.t4, fontSize:12, cursor:'pointer',
+        display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+        transition:'all 0.2s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor='rgba(96,165,250,0.4)'; e.currentTarget.style.color='#60a5fa'; e.currentTarget.style.background='rgba(96,165,250,0.04)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor='rgba(255,255,255,0.1)'; e.currentTarget.style.color=T.t4; e.currentTarget.style.background='transparent'; }}
+    >
+      <Plus size={13}/>항목 추가
+      <span style={{ fontSize:10, color:T.t4, marginLeft:2 }}>Enter ↵</span>
+    </button>
+  );
+
+  return (
+    <div style={{ marginTop:10, background:'rgba(255,255,255,0.04)', borderRadius:10, padding:12, border:`1px solid ${T.b}` }}>
+      <input
+        ref={ref} value={text} onChange={e => setText(e.target.value)}
+        onKeyDown={e => { if(e.key==='Enter'){e.preventDefault();commit();} if(e.key==='Escape'){setText('');setActive(false);} }}
+        placeholder="업무 내용을 입력하세요..."
+        style={{
+          width:'100%', background:'rgba(255,255,255,0.07)',
+          border:'1px solid rgba(96,165,250,0.4)', borderRadius:8,
+          padding:'8px 12px', color:T.t1, fontSize:13, outline:'none',
+          marginBottom:10, boxSizing:'border-box', fontFamily:'inherit',
+        }}
+      />
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div style={{ display:'flex', gap:4 }}>
+          {STATUS_KEYS.map(s => {
+            const c = STATUS[s]; const on = status===s;
+            return (
+              <button key={s} onClick={() => setStatus(s)} style={{
+                padding:'3px 10px', borderRadius:20, fontSize:10, fontWeight:700, cursor:'pointer',
+                border:`1px solid ${on?c.border:T.b}`,
+                background:on?c.bg:'transparent', color:on?c.color:T.t3, transition:'all 0.12s',
+              }}>{s}</button>
+            );
+          })}
+        </div>
+        <div style={{ display:'flex', gap:6 }}>
+          <button onClick={() => { setText(''); setActive(false); }}
+            style={{ background:'transparent', border:`1px solid ${T.b}`, color:T.t3, padding:'5px 10px', borderRadius:7, cursor:'pointer', fontSize:12 }}>
+            취소
+          </button>
+          <button onClick={commit}
+            style={{ background:'#3b82f6', border:'none', color:'#fff', padding:'5px 14px', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:700 }}>
+            추가
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── WorkCard ─────────────────────────────────────────────────────────────────
+const WorkCard = ({ cardKey, items, onItemsChange, onCarryOver, analysisData=[] }) => {
+  const cfg   = CARD[cardKey];
+  const done  = items.filter(i=>i.status==='완료').length;
+  const delay = items.filter(i=>i.status==='지연').length;
+  const pct   = items.length ? Math.round(done/items.length*100) : 0;
+  const CIcon = cfg.icon;
+
+  const statCounts = useMemo(() => {
+    const r = {}; STATUS_KEYS.forEach(s => { r[s]=items.filter(i=>i.status===s).length; }); return r;
+  }, [items]);
+
+  return (
+    <div style={{
+      background:T.card, border:`1px solid ${T.b}`, borderRadius:18,
+      display:'flex', flexDirection:'column', overflow:'hidden',
+      transition:'border-color 0.2s, box-shadow 0.2s',
+    }}
+    onMouseEnter={e => { e.currentTarget.style.borderColor=cfg.border; e.currentTarget.style.boxShadow=`0 0 0 1px ${cfg.border}`; }}
+    onMouseLeave={e => { e.currentTarget.style.borderColor=T.b; e.currentTarget.style.boxShadow='none'; }}
+    >
+      {/* Card header */}
+      <div style={{ padding:'16px 20px 12px', borderBottom:`1px solid ${T.b}` }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{
+              width:32, height:32, borderRadius:10,
+              background:cfg.bg, border:`1px solid ${cfg.border}`,
+              display:'flex', alignItems:'center', justifyContent:'center',
+            }}>
+              <CIcon size={15} color={cfg.color}/>
+            </div>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.t1 }}>{cfg.label}</div>
+              <div style={{ fontSize:10, color:T.t3, marginTop:1 }}>
+                {items.length}개 항목{items.length>0?` · 완료 ${pct}%`:''}
+                {delay>0&&<span style={{color:'#f87171'}}> · 지연 {delay}건</span>}
+              </div>
+            </div>
+          </div>
+          {cardKey==='curr' && onCarryOver && (
+            <button
+              onClick={onCarryOver}
+              style={{
+                display:'flex', alignItems:'center', gap:5, padding:'5px 11px',
+                borderRadius:8, border:`1px solid ${T.b}`, background:'transparent',
+                color:T.t2, fontSize:11, fontWeight:600, cursor:'pointer', transition:'all 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor='rgba(96,165,250,0.4)'; e.currentTarget.style.color='#60a5fa'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor=T.b; e.currentTarget.style.color=T.t2; }}
+            >
+              이관 <ArrowRight size={11}/>
+            </button>
+          )}
+        </div>
+
+        {/* Status mini-bar */}
+        {items.length > 0 && (
+          <div>
+            <div style={{ display:'flex', height:5, borderRadius:5, overflow:'hidden', gap:1, marginBottom:8 }}>
+              {STATUS_KEYS.filter(s=>statCounts[s]>0).map(s => {
+                const c=STATUS[s];
+                return (
+                  <div key={s} style={{
+                    flex:statCounts[s], height:'100%', background:c.color, opacity:0.85,
+                    transition:'flex 0.5s',
+                  }}/>
+                );
+              })}
+              {items.length===0 && <div style={{ flex:1, background:'rgba(255,255,255,0.08)' }}/>}
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              {STATUS_KEYS.filter(s=>statCounts[s]>0).map(s => {
+                const c=STATUS[s];
+                return (
+                  <div key={s} style={{ display:'flex', alignItems:'center', gap:4, fontSize:10, color:T.t3 }}>
+                    <span style={{ width:6,height:6,borderRadius:2,background:c.color }}/>
+                    {s} {statCounts[s]}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Card body */}
+      <div style={{ padding:'12px 20px', flex:1 }}>
+        {items.length===0 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:80, color:T.t4, gap:6 }}>
+            <BarChart3 size={20}/>
+            <span style={{ fontSize:12 }}>항목 없음</span>
+          </div>
+        )}
+        {items.map((item,idx) => {
+          const fl=analysisData.filter(a=>a.index===idx).flatMap(a=>(a.flags||[]).map(f=>({flag:f,comment:a.comment})));
+          return (
+            <WorkItem key={item.id} item={item} flags={fl}
+              onUpdate={u=>onItemsChange(p=>p.map(i=>i.id===item.id?u:i))}
+              onDelete={()=>onItemsChange(p=>p.filter(i=>i.id!==item.id))}
+            />
+          );
+        })}
+        <AddRow onAdd={item=>onItemsChange(p=>[...p,item])}/>
+      </div>
+    </div>
+  );
+};
+
+// ─── HBarChart (Horizontal stacked bar) ──────────────────────────────────────
+const HBarChart = ({ data, activePart }) => {
+  const [sel, setSel] = useState(null);
+
+  const getItems = key => {
+    if (activePart && activePart!=='전체') return data[activePart]?.[key]||[];
+    return PARTS.flatMap(p=>(data[p]?.[key]||[]).map(i=>({...i,part:p})));
+  };
+
+  const rows = [
+    {key:'prev_work',label:'전주 실적'},
+    {key:'curr_work',label:'금주 진행'},
+    {key:'next_work',label:'차주 예정'},
+  ];
+
+  const filtered = sel ? getItems(sel.key).filter(i=>i.status===sel.status) : [];
+
+  return (
+    <div style={{ marginBottom:16 }}>
+      {/* Chart card */}
+      <div style={{
+        background:T.card, border:`1px solid ${T.b}`, borderRadius:18, padding:24, marginBottom:12,
+      }}>
+        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:24 }}>
+          <div>
+            <div style={{ fontSize:14, fontWeight:700, color:T.t1, display:'flex', alignItems:'center', gap:8 }}>
+              <TrendingUp size={16} color="#60a5fa"/>업무 달성 현황
+            </div>
+            <div style={{ fontSize:11, color:T.t3, marginTop:3 }}>각 색상 바를 클릭하면 해당 업무 목록을 확인할 수 있습니다</div>
+          </div>
+          <div style={{ display:'flex', gap:14 }}>
+            {STATUS_KEYS.map(s=>{const c=STATUS[s];return(
+              <div key={s} style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:T.t2 }}>
+                <span style={{ width:8,height:8,borderRadius:2,background:c.color }}/>{s}
+              </div>
+            );})}
+          </div>
+        </div>
+
+        {rows.map(row => {
+          const items=getItems(row.key), total=items.length;
           const done=items.filter(i=>i.status==='완료').length;
           const pct=total?Math.round(done/total*100):0;
-          const pctColor=pct>=70?'#4ade80':pct>=40?'#fbbf24':'#f87171';
-          const byCnt={};STATUS_KEYS.forEach(s=>{byCnt[s]=items.filter(i=>i.status===s).length;});
-          return(
-            <div key={row.key} style={{display:'flex',alignItems:'center',gap:14,padding:'14px 0',borderBottom:`1px solid rgba(255,255,255,0.08)`}}>
-              <div style={{width:80,flexShrink:0}}>
-                <div style={{fontSize:12,fontWeight:700,color:COLOR.textSub}}>{row.label}</div>
-                <div style={{fontSize:10,color:COLOR.textMute,fontFamily:'monospace',marginTop:2}}>{total}건</div>
+          const pctColor=pct>=70?'#34d399':pct>=40?'#fbbf24':'#f87171';
+          const byCnt={}; STATUS_KEYS.forEach(s=>{byCnt[s]=items.filter(i=>i.status===s).length;});
+
+          return (
+            <div key={row.key} style={{
+              display:'flex', alignItems:'center', gap:16, padding:'13px 0',
+              borderBottom:`1px solid rgba(255,255,255,0.05)`,
+            }}>
+              <div style={{ width:82, flexShrink:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:T.t2 }}>{row.label}</div>
+                <div style={{ fontSize:10, color:T.t3, fontFamily:'JetBrains Mono,monospace', marginTop:2 }}>{total}건</div>
               </div>
-              <div style={{flex:1,height:36,background:'rgba(255,255,255,0.07)',borderRadius:8,overflow:'hidden',display:'flex',border:`1px solid rgba(255,255,255,0.1)`}}>
-                {total===0?(
-                  <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                    <span style={{fontSize:11,color:COLOR.textDim}}>항목 없음</span>
+
+              <div style={{
+                flex:1, height:38, background:'rgba(255,255,255,0.06)', borderRadius:10,
+                overflow:'hidden', display:'flex', border:`1px solid rgba(255,255,255,0.08)`,
+              }}>
+                {total===0 ? (
+                  <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <span style={{ fontSize:11, color:T.t4 }}>데이터 없음</span>
                   </div>
-                ):STATUS_KEYS.filter(s=>byCnt[s]>0).map(s=>{
-                  const cfg=STATUS_CFG[s];
-                  const w=Math.round(byCnt[s]/total*100);
-                  const isActive=sel?.cardKey===row.key&&sel?.status===s;
-                  const isDimmed=sel&&!(sel.cardKey===row.key&&sel.status===s);
-                  return(
-                    <div key={s} onClick={()=>setSel(p=>(p?.cardKey===row.key&&p?.status===s)?null:{cardKey:row.key,status:s})}
-                      style={{width:`${w}%`,height:'100%',background:cfg.color,flexShrink:0,
-                        display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                        opacity:isDimmed?0.2:1,outline:isActive?'3px solid rgba(255,255,255,0.5)':'none',
-                        outlineOffset:'-3px',transition:'opacity 0.2s',filter:isActive?'brightness(1.2)':'none'}}
-                      title={`${s}: ${byCnt[s]}건 (${w}%)`}>
-                      <span style={{fontSize:10,fontWeight:800,color:'rgba(0,0,0,0.7)',whiteSpace:'nowrap',padding:'0 5px',pointerEvents:'none'}}>
-                        {w>=14?`${s} ${w}%`:w>=8?`${w}%`:''}
-                      </span>
+                ) : STATUS_KEYS.filter(s=>byCnt[s]>0).map(s => {
+                  const c=STATUS[s], w=Math.round(byCnt[s]/total*100);
+                  const isActive=sel?.key===row.key&&sel?.status===s;
+                  const isDim=sel&&!isActive;
+                  return (
+                    <div key={s}
+                      onClick={() => setSel(p=>(p?.key===row.key&&p?.status===s)?null:{key:row.key,status:s})}
+                      title={`${s}: ${byCnt[s]}건 (${w}%)`}
+                      style={{
+                        width:`${w}%`, height:'100%', background:c.color, flexShrink:0,
+                        display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer',
+                        opacity:isDim?0.18:1, transition:'opacity 0.2s, filter 0.15s',
+                        filter:isActive?'brightness(1.2) saturate(1.2)':'brightness(0.95)',
+                        outline:isActive?'2px solid rgba(255,255,255,0.5)':'none',
+                        outlineOffset:'-2px',
+                      }}
+                      onMouseEnter={e=>{ if(!isDim) e.currentTarget.style.filter='brightness(1.15)'; }}
+                      onMouseLeave={e=>{ e.currentTarget.style.filter=isActive?'brightness(1.2) saturate(1.2)':'brightness(0.95)'; }}
+                    >
+                      {w>=13&&<span style={{ fontSize:10,fontWeight:800,color:'rgba(0,0,0,0.65)',pointerEvents:'none' }}>{w>=18?`${s} `:''}{w}%</span>}
                     </div>
                   );
                 })}
               </div>
-              <div style={{width:68,textAlign:'right',flexShrink:0}}>
-                <div style={{fontSize:22,fontWeight:800,color:total?pctColor:COLOR.textDim,fontFamily:'monospace',lineHeight:1}}>
-                  {total?pct+'%':'—'}
+
+              <div style={{ width:72, textAlign:'right', flexShrink:0 }}>
+                <div style={{ fontSize:22, fontWeight:800, color:total?pctColor:T.t4, fontFamily:'JetBrains Mono,monospace', lineHeight:1 }}>
+                  {total?`${pct}%`:'—'}
                 </div>
-                <div style={{fontSize:9,color:COLOR.textMute,marginTop:3}}>완료 달성률</div>
+                <div style={{ fontSize:9, color:T.t3, marginTop:3 }}>완료 달성률</div>
               </div>
             </div>
           );
         })}
       </div>
-      {sel&&filteredItems.length>0&&(
-        <div style={{...S.card,border:`1px solid ${STATUS_CFG[sel.status]?.border}`,marginBottom:14}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:700,color:STATUS_CFG[sel.status]?.color,display:'flex',alignItems:'center',gap:7}}>
-              <TrendingUp size={14}/>
-              {CARD_CFG[sel.cardKey.replace('_work','')]?.label} · {sel.status} ({filteredItems.length}건)
+
+      {/* Drill-down panel */}
+      {sel && filtered.length>0 && (
+        <div style={{
+          background:T.card, border:`1px solid ${STATUS[sel.status]?.border}`,
+          borderRadius:16, padding:20, animation:'fadeUp 0.2s ease',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:STATUS[sel.status]?.color, display:'flex', alignItems:'center', gap:7 }}>
+              <Filter size={14}/>
+              {CARD[sel.key.replace('_work','')]?.label} · {sel.status} ({filtered.length}건)
             </div>
-            <button onClick={()=>setSel(null)} style={S.iconBtn}><X size={14}/></button>
+            <IconBtn icon={<X size={13}/>} onClick={()=>setSel(null)}/>
           </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {filteredItems.map((item,i)=>{
-              const cfg=STATUS_CFG[item.status]||STATUS_CFG['진행중'];
-              return(
-                <div key={i} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',
-                  background:`${cfg.color}12`,border:`1px solid ${cfg.border}`,borderRadius:9}}>
-                  <StatusTag status={item.status}/>
-                  <span style={{flex:1,fontSize:13,color:COLOR.textSub,lineHeight:1.5}}>{item.text}</span>
-                  {item.part&&<span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:5,
-                    border:`1px solid ${COLOR.border}`,color:COLOR.textMute,background:'rgba(255,255,255,0.05)',flexShrink:0}}>{item.part}</span>}
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {filtered.map((item,i) => {
+              const c=STATUS[item.status]||STATUS['진행중'];
+              return (
+                <div key={i} style={{
+                  display:'flex', alignItems:'center', gap:12, padding:'10px 14px',
+                  background:`${c.color}0d`, border:`1px solid ${c.border}`, borderRadius:10,
+                }}>
+                  <Badge status={item.status}/>
+                  <span style={{ flex:1, fontSize:13, color:T.t2, lineHeight:1.5 }}>{item.text}</span>
+                  {item.part&&<Pill label={item.part}/>}
                 </div>
               );
             })}
@@ -404,128 +586,137 @@ function HorizontalBarChart({data,activePart}) {
       )}
     </div>
   );
-}
+};
 
-// ── BottleneckBar ─────────────────────────────────────────────────────────────
-function BottleneckBar({data}) {
-  const stats=PARTS.map(part=>{
-    const rd=data[part]||{};
-    const all=[...(rd.prev_work||[]),...(rd.curr_work||[]),...(rd.next_work||[])];
-    return{part,total:all.length,delay:all.filter(i=>i.status==='지연').length};
-  });
-  return(
-    <div style={S.card}>
-      <div style={{fontSize:13,fontWeight:700,color:COLOR.text,marginBottom:4,display:'flex',alignItems:'center',gap:7}}>
-        <AlertTriangle size={15} color="#f87171"/> 업무 병목 지수
-      </div>
-      <div style={{fontSize:11,color:COLOR.textMute,marginBottom:16}}>파트별 지연 비율 — 40% 이상 즉시 조치 필요</div>
-      {stats.map(s=>{
-        const pct=s.total?Math.round(s.delay/s.total*100):0;
-        const clr=pct>=40?'#f87171':pct>=20?'#fbbf24':'#4ade80';
-        const risk=pct>=40?'위험':pct>=20?'주의':'정상';
-        return(
-          <div key={s.part} style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
-            <span style={{fontSize:12,fontWeight:700,color:COLOR.textSub,width:32,flexShrink:0}}>{s.part}</span>
-            <div style={{flex:1,height:20,background:'rgba(255,255,255,0.08)',borderRadius:4,overflow:'hidden'}}>
-              <div style={{height:'100%',width:`${Math.max(pct,2)}%`,background:clr,borderRadius:4,transition:'width 0.5s'}}/>
-            </div>
-            <span style={{fontSize:11,fontWeight:700,color:clr,fontFamily:'monospace',width:32,textAlign:'right'}}>{pct}%</span>
-            <span style={{fontSize:9,fontWeight:800,padding:'2px 7px',borderRadius:4,flexShrink:0,
-              color:clr,background:`${clr}20`,border:`1px solid ${clr}44`}}>{risk}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+// ─── AnalyticsView ────────────────────────────────────────────────────────────
+const AnalyticsView = ({ selectedWeek, data }) => {
+  const [apart, setApart] = useState('전체');
 
-// ── AnalyticsView ─────────────────────────────────────────────────────────────
-function AnalyticsView({selectedWeek,data}) {
-  const [apartFilter,setApartFilter]=useState('전체');
-  const activeStats=PARTS.map(part=>{
-    if(apartFilter!=='전체'&&part!==apartFilter)return null;
-    const rd=data[part]||{prev_work:[],curr_work:[],next_work:[]};
-    const all=[...rd.prev_work,...rd.curr_work,...rd.next_work];
-    return{part,done:all.filter(i=>i.status==='완료').length,ing:all.filter(i=>i.status==='진행중').length,
-      plan:all.filter(i=>i.status==='예정').length,delay:all.filter(i=>i.status==='지연').length,total:all.length};
-  }).filter(Boolean);
-  const total=activeStats.reduce((a,s)=>a+s.total,0)||1;
-  const done=activeStats.reduce((a,s)=>a+s.done,0);
-  const delay=activeStats.reduce((a,s)=>a+s.delay,0);
-  const ing=activeStats.reduce((a,s)=>a+s.ing,0);
-  const kpis=[
-    {label:'완료율',value:Math.round(done/total*100)+'%',sub:`${done}/${total} 완료`,color:'#4ade80',border:'rgba(74,222,128,0.3)'},
-    {label:'전체 업무',value:total,sub:apartFilter==='전체'?'3개 파트 합산':'해당 파트',color:'#60a5fa',border:'rgba(96,165,250,0.3)'},
-    {label:'진행중',value:ing,sub:'현재 처리 중',color:'#fbbf24',border:'rgba(251,191,36,0.3)'},
-    {label:'지연',value:delay,sub:delay>0?'즉시 조치 필요':'이슈 없음',color:'#f87171',border:'rgba(248,113,113,0.3)'},
+  const stats = useMemo(() => {
+    return PARTS
+      .filter(p => apart==='전체'||p===apart)
+      .map(p => {
+        const rd=data[p]||{prev_work:[],curr_work:[],next_work:[]};
+        const all=[...rd.prev_work,...rd.curr_work,...rd.next_work];
+        return { p, done:all.filter(i=>i.status==='완료').length, ing:all.filter(i=>i.status==='진행중').length,
+          plan:all.filter(i=>i.status==='예정').length, delay:all.filter(i=>i.status==='지연').length, total:all.length };
+      });
+  }, [apart, data]);
+
+  const total=stats.reduce((a,s)=>a+s.total,0)||1;
+  const done=stats.reduce((a,s)=>a+s.done,0);
+  const delay=stats.reduce((a,s)=>a+s.delay,0);
+  const ing=stats.reduce((a,s)=>a+s.ing,0);
+
+  const kpis = [
+    {l:'완료율', v:`${Math.round(done/total*100)}%`, s:`${done}/${total} 완료`, c:'#34d399', b:'rgba(52,211,153,0.2)'},
+    {l:'전체 업무', v:total, s:apart==='전체'?'3개 파트 합산':'해당 파트', c:'#60a5fa', b:'rgba(96,165,250,0.2)'},
+    {l:'진행중', v:ing, s:'현재 처리 중', c:'#fbbf24', b:'rgba(251,191,36,0.2)'},
+    {l:'지연', v:delay, s:delay>0?'즉시 조치 필요':'이슈 없음', c:'#f87171', b:'rgba(248,113,113,0.2)'},
   ];
-  return(
+
+  return (
     <div>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
-        <div style={{display:'flex',gap:3,padding:3,background:'rgba(255,255,255,0.05)',borderRadius:10,border:`1px solid ${COLOR.border}`}}>
-          {['전체',...PARTS].map(p=>(
-            <button key={p} onClick={()=>setApartFilter(p)}
-              style={{padding:'6px 14px',borderRadius:8,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,
-                background:apartFilter===p?'#fff':'transparent',color:apartFilter===p?'#0f172a':COLOR.textSub,transition:'all 0.15s'}}>
-              {p}
-            </button>
-          ))}
-        </div>
-        <span style={{fontSize:11,color:COLOR.textMute,fontFamily:'monospace'}}>{selectedWeek}</span>
+      {/* Filter */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
+        <SegmentControl options={['전체',...PARTS]} value={apart} onChange={setApart}/>
+        <span style={{ fontSize:11, color:T.t3, fontFamily:'JetBrains Mono,monospace' }}>{selectedWeek}</span>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:18}}>
+
+      {/* KPIs */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
         {kpis.map(k=>(
-          <div key={k.label} style={{...S.card,border:`1px solid ${k.border}`,padding:'16px 18px'}}>
-            <div style={{fontSize:11,fontWeight:700,color:k.color,marginBottom:5,display:'flex',alignItems:'center',gap:5}}>
-              <span style={{width:6,height:6,borderRadius:'50%',background:k.color}}/>{k.label}
+          <div key={k.l} style={{ background:T.card, border:`1px solid ${k.b}`, borderRadius:14, padding:'16px 20px' }}>
+            <div style={{ fontSize:10, fontWeight:700, color:k.c, marginBottom:6, display:'flex', alignItems:'center', gap:5 }}>
+              <span style={{ width:6,height:6,borderRadius:'50%',background:k.c }}/>{k.l}
             </div>
-            <div style={{fontSize:28,fontWeight:800,color:COLOR.text,lineHeight:1,fontFamily:'monospace'}}>{k.value}</div>
-            <div style={{fontSize:10,color:COLOR.textMute,marginTop:4}}>{k.sub}</div>
+            <div style={{ fontSize:30, fontWeight:800, color:T.t1, lineHeight:1, fontFamily:'JetBrains Mono,monospace' }}>{k.v}</div>
+            <div style={{ fontSize:10, color:T.t3, marginTop:5 }}>{k.s}</div>
           </div>
         ))}
       </div>
-      <HorizontalBarChart data={data} activePart={apartFilter}/>
-      <BottleneckBar data={data}/>
+
+      <HBarChart data={data} activePart={apart}/>
+
+      {/* Bottleneck */}
+      <div style={{ background:T.card, border:`1px solid ${T.b}`, borderRadius:18, padding:24 }}>
+        <SectionHeader icon={<AlertTriangle size={15} color="#f87171"/>} title="업무 병목 지수" sub="파트별 지연 비율 — 빨간 바 클릭 시 지연 업무만 필터"/>
+        <div style={{ marginTop:16 }}>
+          {PARTS.map(p=>{
+            const rd=data[p]||{};
+            const all=[...(rd.prev_work||[]),...(rd.curr_work||[]),...(rd.next_work||[])];
+            const pct=all.length?Math.round(all.filter(i=>i.status==='지연').length/all.length*100):0;
+            const clr=pct>=40?'#f87171':pct>=20?'#fbbf24':'#34d399';
+            const risk=pct>=40?'위험':pct>=20?'주의':'정상';
+            return (
+              <div key={p} style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+                <span style={{ fontSize:12, fontWeight:600, color:T.t2, width:32, flexShrink:0 }}>{p}</span>
+                <div style={{ flex:1, height:22, background:'rgba(255,255,255,0.07)', borderRadius:6, overflow:'hidden', position:'relative' }}>
+                  <div style={{ height:'100%', width:`${Math.max(pct,2)}%`, background:clr, borderRadius:6, transition:'width 0.6s ease' }}/>
+                </div>
+                <span style={{ fontSize:12, fontWeight:700, color:clr, fontFamily:'JetBrains Mono,monospace', width:36, textAlign:'right' }}>{pct}%</span>
+                <span style={{
+                  fontSize:9, fontWeight:800, padding:'3px 8px', borderRadius:5, flexShrink:0,
+                  color:clr, background:`${clr}18`, border:`1px solid ${clr}44`,
+                }}>{risk}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display:'flex', gap:14, marginTop:16, paddingTop:16, borderTop:`1px solid ${T.b}` }}>
+          {[['0–19%','정상','#34d399'],['20–39%','주의','#fbbf24'],['40%+','위험','#f87171']].map(([r,l,c])=>(
+            <div key={l} style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:T.t3 }}>
+              <span style={{ width:8,height:8,borderRadius:2,background:c }}/>{r} <span style={{ color:c,fontWeight:700 }}>{l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
-}
+};
 
-// ── KanbanBoard ───────────────────────────────────────────────────────────────
-function KanbanBoard({data}) {
-  const all=[];
-  PARTS.forEach(part=>{const rd=data[part]||{};['prev_work','curr_work','next_work'].forEach(k=>(rd[k]||[]).forEach(i=>all.push({...i,part,cardKey:k.replace('_work',''),cardLabel:CARD_CFG[k.replace('_work','')]?.label})));});
-  const byS={};STATUS_KEYS.forEach(s=>{byS[s]=all.filter(i=>i.status===s);});
-  const tot=all.length||1;
-  return(
+// ─── KanbanBoard ──────────────────────────────────────────────────────────────
+const KanbanBoard = ({ data }) => {
+  const all = useMemo(()=>{
+    const r=[];
+    PARTS.forEach(p=>{const rd=data[p]||{};['prev_work','curr_work','next_work'].forEach(k=>(rd[k]||[]).forEach(i=>r.push({...i,part:p,cardKey:k.replace('_work',''),cardLabel:CARD[k.replace('_work','')]?.label})));});
+    return r;
+  },[data]);
+
+  const byS = useMemo(()=>{const r={};STATUS_KEYS.forEach(s=>{r[s]=all.filter(i=>i.status===s);});return r;},[all]);
+  const tot = all.length||1;
+
+  return (
     <div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
-        {STATUS_KEYS.map(s=>{const c=STATUS_CFG[s];return(
-          <div key={s} style={{...S.card,border:`1px solid ${c.border}`,padding:'16px 18px'}}>
-            <div style={{fontSize:11,fontWeight:700,color:c.color,marginBottom:5,display:'flex',alignItems:'center',gap:5}}>
-              <span style={{width:6,height:6,borderRadius:'50%',background:c.color}}/>{s}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+        {STATUS_KEYS.map(s=>{const c=STATUS[s];return(
+          <div key={s} style={{ background:T.card, border:`1px solid ${c.border}`, borderRadius:14, padding:'16px 20px' }}>
+            <div style={{ fontSize:10, fontWeight:700, color:c.color, marginBottom:5, display:'flex', alignItems:'center', gap:5 }}>
+              <span style={{ width:6,height:6,borderRadius:'50%',background:c.color }}/>{s}
             </div>
-            <div style={{fontSize:28,fontWeight:800,color:COLOR.text,fontFamily:'monospace'}}>{byS[s].length}</div>
-            <div style={{fontSize:10,color:COLOR.textMute,marginTop:4}}>전체의 {Math.round(byS[s].length/tot*100)}%</div>
+            <div style={{ fontSize:30, fontWeight:800, color:T.t1, fontFamily:'JetBrains Mono,monospace' }}>{byS[s].length}</div>
+            <div style={{ fontSize:10, color:T.t3, marginTop:4 }}>전체의 {Math.round(byS[s].length/tot*100)}%</div>
           </div>
         );})}
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,alignItems:'start'}}>
-        {STATUS_KEYS.map(s=>{const cfg=STATUS_CFG[s];const items=byS[s];return(
-          <div key={s} style={{...S.card,padding:0,overflow:'hidden'}}>
-            <div style={{padding:'11px 14px',borderBottom:`1px solid ${COLOR.border}`,background:cfg.bg,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:12,fontWeight:700,color:cfg.color,display:'flex',alignItems:'center',gap:5}}>
-                <span style={{width:6,height:6,borderRadius:'50%',background:cfg.color}}/>{s}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, alignItems:'start' }}>
+        {STATUS_KEYS.map(s=>{const c=STATUS[s];const items=byS[s];return(
+          <div key={s} style={{ background:T.card, border:`1px solid ${T.b}`, borderRadius:16, overflow:'hidden' }}>
+            <div style={{ padding:'12px 16px', borderBottom:`1px solid ${T.b}`, background:c.bg, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <span style={{ fontSize:12,fontWeight:700,color:c.color,display:'flex',alignItems:'center',gap:6 }}>
+                <span style={{ width:6,height:6,borderRadius:'50%',background:c.color }}/>{s}
               </span>
-              <span style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:999,background:cfg.bg,border:`1px solid ${cfg.border}`,color:cfg.color}}>{items.length}</span>
+              <span style={{ fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:999,background:c.bg,border:`1px solid ${c.border}`,color:c.color }}>{items.length}</span>
             </div>
-            <div style={{padding:8,display:'flex',flexDirection:'column',gap:5}}>
-              {items.length===0&&<div style={{padding:'20px 12px',textAlign:'center',color:COLOR.textDim,fontSize:12}}>항목 없음</div>}
-              {items.map((item,i)=>{const cc=CARD_CFG[item.cardKey];return(
-                <div key={i} style={{background:'rgba(255,255,255,0.04)',border:`1px solid ${COLOR.border}`,borderRadius:9,padding:'10px 12px'}}>
-                  <div style={{fontSize:12,color:COLOR.textSub,lineHeight:1.5,marginBottom:8}}>{item.text}</div>
-                  <div style={{display:'flex',gap:4}}>
-                    <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:999,background:cc?.bg,border:`1px solid ${cc?.border}`,color:cc?.color}}>{item.part}</span>
-                    <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:999,background:cc?.bg,border:`1px solid ${cc?.border}`,color:cc?.color}}>{item.cardLabel}</span>
+            <div style={{ padding:10, display:'flex', flexDirection:'column', gap:6 }}>
+              {items.length===0&&<div style={{ padding:'20px',textAlign:'center',color:T.t4,fontSize:12 }}>항목 없음</div>}
+              {items.map((item,i)=>{const cc=CARD[item.cardKey];return(
+                <div key={i} style={{ background:'rgba(255,255,255,0.03)',border:`1px solid ${T.b}`,borderRadius:10,padding:'12px 14px' }}>
+                  <div style={{ fontSize:13,color:T.t2,lineHeight:1.5,marginBottom:10 }}>{item.text}</div>
+                  <div style={{ display:'flex',gap:6,flexWrap:'wrap' }}>
+                    <Badge status={item.status} size="xs"/>
+                    <span style={{ fontSize:9,fontWeight:600,padding:'2px 8px',borderRadius:999,background:cc?.bg,border:`1px solid ${cc?.border}`,color:cc?.color }}>{item.part}</span>
+                    <span style={{ fontSize:9,fontWeight:600,padding:'2px 8px',borderRadius:999,background:cc?.bg,border:`1px solid ${cc?.border}`,color:cc?.color }}>{item.cardLabel}</span>
                   </div>
                 </div>
               );})}
@@ -535,140 +726,213 @@ function KanbanBoard({data}) {
       </div>
     </div>
   );
-}
+};
 
-// ── SearchView ────────────────────────────────────────────────────────────────
-function SearchView() {
-  const [start,setStart]=useState('');const [end,setEnd]=useState('');
-  const [results,setResults]=useState(null);const [loading,setLoading]=useState(false);
-  const [keyword,setKeyword]=useState('');const [fPart,setFP]=useState('전체');const [fStat,setFS]=useState('전체');
-  const handleSearch=async()=>{
-    if(!start||!end)return;setLoading(true);
-    try{const ids=weekIdsInRange(start,end);const{data}=await dbCall('search',{week_ids:ids});setResults(data||[]);}
-    catch(e){setResults([]);}setLoading(false);
-  };
-  const allItems=[];
-  if(results){results.forEach(row=>{['prev_work','curr_work','next_work'].forEach(k=>{toItems(row[k]).forEach((i,idx)=>{allItems.push({...i,week_id:row.week_id,part:row.part_name,cardLabel:CARD_CFG[k.replace('_work','')]?.label,rowKey:`${row.week_id}-${row.part_name}-${k}-${idx}`});});});});}
-  const filtered=allItems.filter(i=>{
-    if(fPart!=='전체'&&i.part!==fPart)return false;
-    if(fStat!=='전체'&&i.status!==fStat)return false;
-    if(keyword&&!i.text.toLowerCase().includes(keyword.toLowerCase()))return false;
+// ─── GlobalView ───────────────────────────────────────────────────────────────
+const GlobalView = () => {
+  const [rows,setRows]           = useState([]);
+  const [loading,setLoading]     = useState(true);
+  const [statusFilter,setStatus] = useState('전체');
+  const [partFilter,setPart]     = useState('전체');
+  const [keyword,setKeyword]     = useState('');
+
+  useEffect(()=>{
+    async function load() {
+      setLoading(true);
+      try { const {data}=await dbCall('load_global'); setRows(data||[]); }
+      catch(e) { console.error(e); }
+      setLoading(false);
+    }
+    load();
+  },[]);
+
+  const flat = useMemo(()=>{
+    const r=[];
+    rows.forEach(row=>{['prev_work','curr_work','next_work'].forEach(k=>{toItems(row[k]).forEach(item=>{r.push({...item,week_id:row.week_id,part:row.part_name,cardLabel:CARD[k.replace('_work','')]?.label,cardKey:k.replace('_work','')});});});});
+    return r;
+  },[rows]);
+
+  const filtered = useMemo(()=>flat.filter(i=>{
+    if(statusFilter!=='전체'&&i.status!==statusFilter) return false;
+    if(partFilter!=='전체'&&i.part!==partFilter) return false;
+    if(keyword&&!i.text.toLowerCase().includes(keyword.toLowerCase())) return false;
     return true;
-  });
-  const inp={background:'rgba(255,255,255,0.08)',border:`1px solid ${COLOR.border}`,borderRadius:9,padding:'8px 12px',color:COLOR.text,fontSize:12,outline:'none'};
-  return(
+  }),[flat,statusFilter,partFilter,keyword]);
+
+  const counts = useMemo(()=>{const r={};STATUS_KEYS.forEach(s=>{r[s]=flat.filter(i=>i.status===s).length;});return r;},[flat]);
+
+  if(loading) return <LoadingState/>;
+
+  return (
     <div>
-      <div style={{...S.card,marginBottom:16}}>
-        <div style={{fontSize:13,fontWeight:700,color:COLOR.text,marginBottom:14,display:'flex',alignItems:'center',gap:7}}>
-          <Search size={15} color="#60a5fa"/> 기간별 업무 검색
-        </div>
-        <div style={{display:'flex',gap:12,alignItems:'flex-end',flexWrap:'wrap'}}>
-          <div><div style={{fontSize:11,color:COLOR.textSub,fontWeight:600,marginBottom:5}}>시작일</div><input type="date" value={start} onChange={e=>setStart(e.target.value)} style={inp}/></div>
-          <div style={{color:COLOR.textMute,paddingBottom:10}}>~</div>
-          <div><div style={{fontSize:11,color:COLOR.textSub,fontWeight:600,marginBottom:5}}>종료일</div><input type="date" value={end} onChange={e=>setEnd(e.target.value)} style={inp}/></div>
-          <button onClick={handleSearch} disabled={!start||!end||loading}
-            style={{padding:'9px 22px',borderRadius:9,border:'none',background:(!start||!end)?'#1e293b':'#3b82f6',
-              color:(!start||!end)?COLOR.textMute:'#fff',fontSize:13,fontWeight:700,cursor:(!start||!end)?'not-allowed':'pointer',
-              display:'flex',alignItems:'center',gap:6}}>
-            {loading?<RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/>:<Search size={14}/>}검색
-          </button>
-        </div>
-      </div>
-      {results&&(
-        <>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}}>
-            {STATUS_KEYS.map(s=>{const c=STATUS_CFG[s];return(
-              <div key={s} style={{...S.card,border:`1px solid ${c.border}`,padding:'12px 16px'}}>
-                <div style={{fontSize:10,fontWeight:700,color:c.color,marginBottom:4,display:'flex',alignItems:'center',gap:4}}>
-                  <span style={{width:5,height:5,borderRadius:'50%',background:c.color}}/>{s}
-                </div>
-                <div style={{fontSize:24,fontWeight:800,color:COLOR.text,fontFamily:'monospace'}}>{filtered.filter(i=>i.status===s).length}</div>
+      <SectionHeader icon={<Globe size={15} color="#60a5fa"/>} title="전체 업무 보기" sub={`주차 무관 · 모든 데이터 ${flat.length}건`}/>
+      <div style={{ marginTop:16 }}>
+        {/* Status summary */}
+        <div style={{ display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:18 }}>
+          {STATUS_KEYS.map(s=>{const c=STATUS[s];const active=statusFilter===s;return(
+            <button key={s} onClick={()=>setStatus(p=>p===s?'전체':s)}
+              style={{
+                background:active?c.bg:T.card, border:`1px solid ${active?c.border:T.b}`,
+                borderRadius:14, padding:'14px 18px', cursor:'pointer', textAlign:'left',
+                transition:'all 0.2s', boxShadow:active?`0 0 0 1px ${c.border}`:'none',
+              }}>
+              <div style={{ fontSize:10,fontWeight:700,color:c.color,marginBottom:5,display:'flex',alignItems:'center',gap:5 }}>
+                <span style={{ width:6,height:6,borderRadius:'50%',background:c.color }}/>{s}
               </div>
-            );})}
+              <div style={{ fontSize:28,fontWeight:800,color:T.t1,fontFamily:'JetBrains Mono,monospace' }}>{counts[s]||0}</div>
+              <div style={{ fontSize:10,color:T.t3,marginTop:4 }}>클릭하여 필터</div>
+            </button>
+          );})}
+        </div>
+
+        {/* Filter row */}
+        <div style={{ display:'flex',gap:10,alignItems:'center',marginBottom:16,flexWrap:'wrap' }}>
+          <div style={{ position:'relative', flex:'0 0 200px' }}>
+            <Search size={13} color={T.t3} style={{ position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none' }}/>
+            <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="키워드 검색..."
+              style={{ width:'100%',background:T.card,border:`1px solid ${T.b}`,borderRadius:9,padding:'8px 10px 8px 32px',color:T.t1,fontSize:12,outline:'none' }}/>
           </div>
-          <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
-            <input placeholder="키워드 검색..." value={keyword} onChange={e=>setKeyword(e.target.value)} style={{...inp,width:180}}/>
-            <select value={fPart} onChange={e=>setFP(e.target.value)} style={{...inp,cursor:'pointer'}}><option>전체</option>{PARTS.map(p=><option key={p}>{p}</option>)}</select>
-            <select value={fStat} onChange={e=>setFS(e.target.value)} style={{...inp,cursor:'pointer'}}><option>전체</option>{STATUS_KEYS.map(s=><option key={s}>{s}</option>)}</select>
-            <span style={{fontSize:12,color:COLOR.textMute,marginLeft:'auto'}}>{filtered.length}개 항목</span>
+          <SegmentControl options={['전체',...PARTS]} value={partFilter} onChange={setPart} small/>
+          <span style={{ fontSize:11,color:T.t3,marginLeft:'auto' }}>{filtered.length}건 표시</span>
+        </div>
+
+        {/* Table */}
+        {filtered.length===0 ? (
+          <div style={{ background:T.card,border:`1px solid ${T.b}`,borderRadius:16,padding:60,textAlign:'center',color:T.t4 }}>
+            <Globe size={32} style={{ margin:'0 auto 12px' }}/>
+            <div style={{ fontSize:14 }}>해당 조건의 업무가 없습니다</div>
           </div>
-          <div style={{...S.card,padding:0,overflow:'hidden'}}>
-            <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        ) : (
+          <div style={{ background:T.card,border:`1px solid ${T.b}`,borderRadius:16,overflow:'hidden' }}>
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%',borderCollapse:'collapse' }}>
                 <thead>
-                  <tr style={{background:'rgba(255,255,255,0.04)',borderBottom:`1px solid ${COLOR.border}`}}>
+                  <tr style={{ background:'rgba(255,255,255,0.03)',borderBottom:`1px solid ${T.b}` }}>
                     {['주차','파트','분류','업무 내용','상태'].map(h=>(
-                      <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:700,color:COLOR.textSub,whiteSpace:'nowrap'}}>{h}</th>
+                      <th key={h} style={{ padding:'11px 16px',textAlign:'left',fontSize:11,fontWeight:700,color:T.t3,whiteSpace:'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((item,i)=>{const sc=STATUS_CFG[item.status]||STATUS_CFG['진행중'];return(
-                    <tr key={item.rowKey} style={{borderBottom:`1px solid rgba(255,255,255,0.06)`,background:i%2?'rgba(255,255,255,0.02)':'transparent'}}>
-                      <td style={{padding:'10px 14px',color:COLOR.textSub,fontFamily:'monospace',fontSize:11}}>{item.week_id}</td>
-                      <td style={{padding:'10px 14px'}}><span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:999,background:'rgba(255,255,255,0.08)',color:COLOR.textSub}}>{item.part}</span></td>
-                      <td style={{padding:'10px 14px',fontSize:11,color:COLOR.textMute}}>{item.cardLabel}</td>
-                      <td style={{padding:'10px 14px',color:COLOR.textSub,maxWidth:280}}>{item.text}</td>
-                      <td style={{padding:'10px 14px'}}><StatusTag status={item.status}/></td>
+                  {filtered.map((item,i)=>{const cc=CARD[item.cardKey];return(
+                    <tr key={i} style={{ borderBottom:`1px solid rgba(255,255,255,0.04)`,background:i%2?'rgba(255,255,255,0.015)':'transparent' }}>
+                      <td style={{ padding:'11px 16px',fontFamily:'JetBrains Mono,monospace',fontSize:11,color:T.t2,whiteSpace:'nowrap' }}>{item.week_id}</td>
+                      <td style={{ padding:'11px 16px' }}><Pill label={item.part}/></td>
+                      <td style={{ padding:'11px 16px' }}>
+                        <span style={{ fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:999,background:cc?.bg,border:`1px solid ${cc?.border}`,color:cc?.color }}>{item.cardLabel}</span>
+                      </td>
+                      <td style={{ padding:'11px 16px',color:T.t1,fontSize:13,maxWidth:320,wordBreak:'break-word' }}>{item.text}</td>
+                      <td style={{ padding:'11px 16px' }}><Badge status={item.status}/></td>
                     </tr>
                   );})}
                 </tbody>
               </table>
             </div>
-          </div>
-        </>
-      )}
-      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
-}
-
-// ── WeekManager ───────────────────────────────────────────────────────────────
-function WeekManager({weeks,onClose,onAdd}) {
-  const [date,setDate]=useState('');
-  const preview=date?dateToWeekId(date):'';
-  const exists=weeks.includes(preview);
-  return(
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',backdropFilter:'blur(8px)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={onClose}>
-      <div style={{background:COLOR.elevated,border:`1px solid ${COLOR.border}`,borderRadius:22,padding:32,width:440,boxShadow:'0 24px 64px rgba(0,0,0,0.7)'}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:22}}>
-          <div style={{fontSize:16,fontWeight:800,color:COLOR.text,display:'flex',alignItems:'center',gap:8}}>
-            <PlusCircle size={17} color="#60a5fa"/>주차 관리
-          </div>
-          <button onClick={onClose} style={S.iconBtn}><X size={17}/></button>
-        </div>
-
-        {/* 자동 이관 안내 */}
-        <div style={{background:'rgba(96,165,250,0.1)',border:'1px solid rgba(96,165,250,0.25)',borderRadius:10,padding:'12px 14px',marginBottom:16}}>
-          <div style={{fontSize:12,fontWeight:700,color:'#60a5fa',marginBottom:4,display:'flex',alignItems:'center',gap:5}}>
-            <Info size={13}/>자동 이관 안내
-          </div>
-          <div style={{fontSize:11,color:COLOR.textSub,lineHeight:1.6}}>
-            새 주차를 처음 열면 <strong style={{color:COLOR.text}}>전주의 금주 진행 항목</strong>이 자동으로 <strong style={{color:COLOR.text}}>이번 주 전주 실적</strong>으로 이관됩니다.<br/>
-            완료되지 않은 업무도 자동으로 넘어와 연속 추적이 가능합니다.
-          </div>
-        </div>
-
-        <div style={{fontSize:12,color:COLOR.textMute,marginBottom:8}}>날짜 선택 → 해당 주차 자동 생성</div>
-        <input type="date" value={date} onChange={e=>setDate(e.target.value)}
-          style={{width:'100%',background:'rgba(255,255,255,0.08)',border:`1px solid ${COLOR.border}`,borderRadius:10,padding:'10px 14px',color:COLOR.text,fontSize:13,outline:'none',marginBottom:10,boxSizing:'border-box'}}/>
-        {preview&&(
-          <div style={{padding:'9px 14px',borderRadius:10,background:exists?'rgba(251,191,36,0.1)':'rgba(96,165,250,0.1)',border:`1px solid ${exists?'rgba(251,191,36,0.3)':'rgba(96,165,250,0.3)'}`,fontSize:12,color:exists?'#fbbf24':'#60a5fa',display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
-            <Calendar size={13}/><span style={{fontFamily:'monospace',fontWeight:700}}>{preview}</span>
-            <span style={{marginLeft:'auto',fontSize:10}}>{exists?'이미 존재':weekIdToRange(preview)}</span>
+            <div style={{ padding:'10px 16px',borderTop:`1px solid ${T.b}`,fontSize:10,color:T.t4,display:'flex',justifyContent:'space-between' }}>
+              <span>총 {filtered.length}건</span>
+              <span>상태 카드를 클릭해 빠르게 필터링</span>
+            </div>
           </div>
         )}
-        <button onClick={()=>{if(preview&&!exists){onAdd(preview);onClose();}}} disabled={!preview||exists}
-          style={{width:'100%',padding:12,borderRadius:11,border:'none',background:(!preview||exists)?'rgba(255,255,255,0.06)':'#3b82f6',color:(!preview||exists)?COLOR.textMute:'#fff',fontSize:13,fontWeight:700,cursor:(!preview||exists)?'not-allowed':'pointer'}}>
+      </div>
+    </div>
+  );
+};
+
+// ─── Shared UI Primitives ─────────────────────────────────────────────────────
+const SegmentControl = ({ options, value, onChange, small }) => (
+  <div style={{ display:'flex',gap:2,padding:3,background:'rgba(255,255,255,0.05)',borderRadius:10,border:`1px solid ${T.b}` }}>
+    {options.map(o=>(
+      <button key={o} onClick={()=>onChange(o)} style={{
+        padding:small?'4px 10px':'6px 16px', borderRadius:8, border:'none', cursor:'pointer',
+        fontSize:small?11:12, fontWeight:700, transition:'all 0.15s',
+        background:value===o?'#fff':'transparent', color:value===o?'#0f172a':T.t3,
+      }}>{o}</button>
+    ))}
+  </div>
+);
+
+const SectionHeader = ({ icon, title, sub }) => (
+  <div style={{ display:'flex', alignItems:'flex-start', gap:10 }}>
+    <div style={{ paddingTop:1 }}>{icon}</div>
+    <div>
+      <div style={{ fontSize:14, fontWeight:700, color:T.t1 }}>{title}</div>
+      {sub&&<div style={{ fontSize:11, color:T.t3, marginTop:3 }}>{sub}</div>}
+    </div>
+  </div>
+);
+
+const LoadingState = () => (
+  <div style={{ display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:320,gap:12,color:T.t3 }}>
+    <RefreshCw size={24} className="animate-spin"/>
+    <span style={{ fontSize:14 }}>데이터 불러오는 중...</span>
+  </div>
+);
+
+// ─── WeekManager ─────────────────────────────────────────────────────────────
+const WeekManager = ({ weeks, onClose, onAdd }) => {
+  const [date,setDate] = useState('');
+  const preview = date ? dateToWeekId(date) : '';
+  const exists  = weeks.includes(preview);
+
+  return (
+    <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',backdropFilter:'blur(12px)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center' }}
+      onClick={onClose}>
+      <div style={{ background:T.el,border:`1px solid ${T.bm}`,borderRadius:24,padding:32,width:460,boxShadow:'0 24px 80px rgba(0,0,0,0.7)',animation:'fadeUp 0.2s ease' }}
+        onClick={e=>e.stopPropagation()}>
+        <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24 }}>
+          <div style={{ fontSize:16,fontWeight:800,color:T.t1,display:'flex',alignItems:'center',gap:8 }}>
+            <PlusCircle size={17} color="#60a5fa"/>주차 관리
+          </div>
+          <IconBtn icon={<X size={16}/>} onClick={onClose}/>
+        </div>
+
+        {/* Auto carry-over info */}
+        <div style={{ background:'rgba(96,165,250,0.08)',border:'1px solid rgba(96,165,250,0.2)',borderRadius:12,padding:'14px 16px',marginBottom:20 }}>
+          <div style={{ fontSize:12,fontWeight:700,color:'#60a5fa',marginBottom:6,display:'flex',alignItems:'center',gap:5 }}>
+            <Zap size={13}/>자동 이관 방식
+          </div>
+          <div style={{ fontSize:12,color:T.t2,lineHeight:1.7 }}>
+            새 주차를 처음 열면 <strong style={{color:T.t1}}>전주의 금주 진행 항목</strong>이 자동으로
+            <strong style={{color:T.t1}}> 이번 주 전주 실적</strong>으로 이관되어 저장됩니다.
+          </div>
+        </div>
+
+        <label style={{ fontSize:11,fontWeight:600,color:T.t2,marginBottom:6,display:'block' }}>날짜 선택 → 주차 자동 계산</label>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{
+          width:'100%',background:'rgba(255,255,255,0.07)',border:`1px solid ${T.bm}`,
+          borderRadius:10,padding:'10px 14px',color:T.t1,fontSize:13,outline:'none',
+          marginBottom:10,boxSizing:'border-box',fontFamily:'inherit',
+        }}/>
+
+        {preview && (
+          <div style={{ padding:'10px 14px',borderRadius:10,marginBottom:14,
+            background:exists?'rgba(251,191,36,0.08)':'rgba(96,165,250,0.08)',
+            border:`1px solid ${exists?'rgba(251,191,36,0.25)':'rgba(96,165,250,0.25)'}`,
+            fontSize:12,color:exists?'#fbbf24':'#60a5fa',display:'flex',alignItems:'center',gap:8 }}>
+            <Calendar size={13}/>
+            <span style={{ fontFamily:'JetBrains Mono,monospace',fontWeight:700 }}>{preview}</span>
+            <span style={{ marginLeft:'auto',fontSize:10 }}>{exists?'이미 존재':weekIdToRange(preview)}</span>
+          </div>
+        )}
+
+        <button onClick={()=>{if(preview&&!exists){onAdd(preview);onClose();}}} disabled={!preview||exists} style={{
+          width:'100%',padding:13,borderRadius:12,border:'none',
+          background:(!preview||exists)?'rgba(255,255,255,0.05)':'#3b82f6',
+          color:(!preview||exists)?T.t4:'#fff',fontSize:13,fontWeight:700,
+          cursor:(!preview||exists)?'not-allowed':'pointer',transition:'all 0.2s',
+          boxShadow:(!preview||exists)?'none':'0 4px 20px rgba(59,130,246,0.35)',
+        }}>
           {exists?'이미 추가된 주차':'주차 추가하기'}
         </button>
-        <div style={{marginTop:20}}>
-          <div style={{fontSize:11,color:COLOR.textSub,fontWeight:600,marginBottom:8}}>등록된 주차 ({weeks.length})</div>
-          <div style={{display:'flex',flexDirection:'column',gap:4,maxHeight:180,overflowY:'auto'}}>
+
+        <div style={{ marginTop:20 }}>
+          <div style={{ fontSize:11,color:T.t2,fontWeight:600,marginBottom:10 }}>등록된 주차 ({weeks.length})</div>
+          <div style={{ display:'flex',flexDirection:'column',gap:4,maxHeight:160,overflowY:'auto' }}>
             {weeks.map(w=>(
-              <div key={w} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:8,background:'rgba(255,255,255,0.04)',border:`1px solid ${COLOR.border}`}}>
-                <span style={{fontSize:12,fontFamily:'monospace',color:COLOR.textSub}}>{w}</span>
-                <span style={{fontSize:10,color:COLOR.textMute}}>{weekIdToRange(w)}</span>
+              <div key={w} style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:9,background:'rgba(255,255,255,0.04)',border:`1px solid ${T.b}` }}>
+                <span style={{ fontSize:12,fontFamily:'JetBrains Mono,monospace',color:T.t2 }}>{w}</span>
+                <span style={{ fontSize:10,color:T.t3 }}>{weekIdToRange(w)}</span>
               </div>
             ))}
           </div>
@@ -676,348 +940,413 @@ function WeekManager({weeks,onClose,onAdd}) {
       </div>
     </div>
   );
-}
+};
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function Toast({msg,onClose}) {
-  useEffect(()=>{const t=setTimeout(onClose,5000);return()=>clearTimeout(t);},[onClose]);
-  return(
-    <div style={{position:'fixed',bottom:28,left:'50%',transform:'translateX(-50%)',background:COLOR.elevated,border:'1px solid rgba(74,222,128,0.35)',borderRadius:13,padding:'12px 20px',zIndex:9999,display:'flex',alignItems:'center',gap:10,boxShadow:'0 8px 32px rgba(0,0,0,0.6)',maxWidth:520}}>
-      <Info size={15} color="#4ade80"/>
-      <span style={{fontSize:13,color:COLOR.textSub}}>{msg}</span>
-      <button onClick={onClose} style={{...S.iconBtn,marginLeft:4}}><X size={13}/></button>
+// ─── Toast ────────────────────────────────────────────────────────────────────
+const Toast = ({ msg, type='success', onClose }) => {
+  useEffect(()=>{ const t=setTimeout(onClose,5000); return()=>clearTimeout(t); },[onClose]);
+  const color = type==='error'?'#f87171':'#34d399';
+  const border = type==='error'?'rgba(248,113,113,0.3)':'rgba(52,211,153,0.3)';
+  const Icon = type==='error'?AlertTriangle:CheckCircle2;
+  return (
+    <div style={{
+      position:'fixed',bottom:28,left:'50%',transform:'translateX(-50%)',
+      background:T.el,border:`1px solid ${border}`,borderRadius:14,
+      padding:'12px 20px',zIndex:9999,display:'flex',alignItems:'center',gap:10,
+      boxShadow:'0 8px 40px rgba(0,0,0,0.6)',maxWidth:520,animation:'fadeUp 0.2s ease',
+    }}>
+      <Icon size={15} color={color}/>
+      <span style={{ fontSize:13,color:T.t2,lineHeight:1.4 }}>{msg}</span>
+      <button onClick={onClose} style={{ background:'transparent',border:'none',cursor:'pointer',color:T.t3,marginLeft:8,padding:2 }}><X size={13}/></button>
     </div>
   );
-}
+};
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-const EMPTY=()=>({prev_work:[],curr_work:[],next_work:[],ax_case:'',notices:''});
-
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
 export default function MiraiDashboard() {
-  const [weeks,setWeeks]=useState([]);
-  const [selectedWeek,setSelectedWeek]=useState('');
-  const [activeTab,setActiveTab]=useState(PARTS[0]);
-  const [viewMode,setViewMode]=useState('report');
-  const [reportData,setReportData]=useState(EMPTY());
-  const [allPartData,setAllPartData]=useState({});
-  const [loading,setLoading]=useState(true);
-  const [saveState,setSaveState]=useState('idle');
-  const [online,setOnline]=useState(true);
-  const [toast,setToast]=useState(null);
-  const [showWeekMgr,setShowWeekMgr]=useState(false);
-  const [analysis,setAnalysis]=useState(null);
-  const [analysisLoading,setAnalysisLoading]=useState(false);
-  const [showAnalysis,setShowAnalysis]=useState(false);
+  const [weeks,setWeeks]               = useState([]);
+  const [selectedWeek,setSelectedWeek] = useState('');
+  const [activeTab,setActiveTab]       = useState(PARTS[0]);
+  const [viewMode,setViewMode]         = useState('report');
+  const [reportData,setReportData]     = useState(EMPTY());
+  const [allPartData,setAllPartData]   = useState({});
+  const [loading,setLoading]           = useState(true);
+  const [saveState,setSaveState]       = useState('idle');
+  const [online,setOnline]             = useState(true);
+  const [toasts,setToasts]             = useState([]);
+  const [showWeekMgr,setShowWeekMgr]   = useState(false);
+  const [analysis,setAnalysis]         = useState(null);
+  const [aiLoading,setAiLoading]       = useState(false);
+  const [showAI,setShowAI]             = useState(false);
+
+  const addToast = useCallback((msg, type='success') => {
+    const id = genId();
+    setToasts(p=>[...p,{id,msg,type}]);
+  },[]);
+  const removeToast = useCallback(id => setToasts(p=>p.filter(t=>t.id!==id)),[]);
 
   useEffect(()=>{
-    const on=()=>setOnline(true),off=()=>setOnline(false);
-    window.addEventListener('online',on);window.addEventListener('offline',off);
-    return()=>{window.removeEventListener('online',on);window.removeEventListener('offline',off);};
+    const on=()=>setOnline(true), off=()=>setOnline(false);
+    window.addEventListener('online',on); window.addEventListener('offline',off);
+    return()=>{ window.removeEventListener('online',on); window.removeEventListener('offline',off); };
   },[]);
 
+  // 주차 로드
   useEffect(()=>{
-    async function loadWeeks(){
-      try{
-        const{data}=await dbCall('load_weeks');
+    async function load() {
+      try {
+        const {data}=await dbCall('load_weeks');
         const ids=[...new Set((data||[]).map(r=>r.week_id))].sort();
         const cur=dateToWeekId(new Date());
         const all=ids.includes(cur)?ids:[...ids,cur].sort();
-        setWeeks(all);setSelectedWeek(all[all.length-1]||cur);
-      }catch(e){const cur=dateToWeekId(new Date());setWeeks([cur]);setSelectedWeek(cur);}
+        setWeeks(all); setSelectedWeek(all[all.length-1]||cur);
+      } catch(e) {
+        const cur=dateToWeekId(new Date());
+        setWeeks([cur]); setSelectedWeek(cur);
+      }
     }
-    loadWeeks();
+    load();
   },[]);
 
+  // 보고 데이터 로드 + 자동 이관
   useEffect(()=>{
-    if(!selectedWeek)return;
-    async function load(){
-      setLoading(true);setAnalysis(null);
-      try{
-        const{data}=await dbCall('load',{week_id:selectedWeek,part_name:activeTab});
-        if(data){
-          setReportData({prev_work:toItems(data.prev_work),curr_work:toItems(data.curr_work),next_work:toItems(data.next_work),ax_case:data.ax_case||'',notices:data.notices||''});
-        }else{
+    if(!selectedWeek) return;
+    async function load() {
+      setLoading(true); setAnalysis(null);
+      try {
+        const {data}=await dbCall('load',{week_id:selectedWeek,part_name:activeTab});
+        if(data) {
+          setReportData({
+            prev_work:toItems(data.prev_work), curr_work:toItems(data.curr_work),
+            next_work:toItems(data.next_work), ax_case:data.ax_case||'', notices:data.notices||'',
+          });
+        } else {
           const wIdx=weeks.indexOf(selectedWeek);
           let auto=EMPTY();
-          if(wIdx>0){
-            try{
-              const{data:prev}=await dbCall('load_prev',{week_id:weeks[wIdx-1],part_name:activeTab});
-              if(prev?.curr_work?.length){
-                auto={...EMPTY(),prev_work:toItems(prev.curr_work)};
-                setToast(`✅ ${weeks[wIdx-1]} 금주 내용이 전주 실적으로 자동 이관되었습니다`);
+          if(wIdx>0) {
+            try {
+              const {data:prev}=await dbCall('load_prev',{week_id:weeks[wIdx-1],part_name:activeTab});
+              if(prev?.curr_work?.length) {
+                const carried=toItems(prev.curr_work);
+                auto={...EMPTY(),prev_work:carried};
+                // 자동 저장
+                await dbCall('save',{week_id:selectedWeek,part_name:activeTab,prev_work:fromItems(carried),curr_work:[],next_work:[],ax_case:'',notices:''});
+                addToast(`${weeks[wIdx-1]} 금주 → 이번 주 전주 실적 자동 이관 완료`);
               }
-            }catch(e){}
+            } catch(e) { console.error('carry-over:',e); }
           }
           setReportData(auto);
         }
-      }catch(e){setToast('데이터 로드 실패: '+e.message);}
+      } catch(e) { addToast('데이터 로드 실패: '+e.message,'error'); }
       setLoading(false);
     }
     load();
-  },[selectedWeek,activeTab,weeks]);
+  },[selectedWeek,activeTab,weeks]); // eslint-disable-line
 
+  // 분석/현황판 데이터
   useEffect(()=>{
-    if(!selectedWeek||(viewMode!=='analytics'&&viewMode!=='board'))return;
-    async function loadAll(){
-      try{
-        const{data:rows}=await dbCall('load_all',{week_id:selectedWeek});
+    if(!selectedWeek||(viewMode!=='analytics'&&viewMode!=='board')) return;
+    async function loadAll() {
+      try {
+        const {data:rows}=await dbCall('load_all',{week_id:selectedWeek});
         const map={};
         (rows||[]).forEach(r=>{map[r.part_name]={prev_work:toItems(r.prev_work),curr_work:toItems(r.curr_work),next_work:toItems(r.next_work)};});
         map[activeTab]={prev_work:reportData.prev_work,curr_work:reportData.curr_work,next_work:reportData.next_work};
         setAllPartData(map);
-      }catch(e){}
+      } catch(e) { console.error(e); }
     }
     loadAll();
   },[viewMode,selectedWeek,reportData]); // eslint-disable-line
 
-  const handleSave=async()=>{
+  // 저장
+  const handleSave = useCallback(async()=>{
     setSaveState('saving');
-    try{
-      await dbCall('save',{week_id:selectedWeek,part_name:activeTab,prev_work:fromItems(reportData.prev_work),curr_work:fromItems(reportData.curr_work),next_work:fromItems(reportData.next_work),ax_case:reportData.ax_case,notices:reportData.notices});
+    try {
+      await dbCall('save',{
+        week_id:selectedWeek, part_name:activeTab,
+        prev_work:fromItems(reportData.prev_work), curr_work:fromItems(reportData.curr_work),
+        next_work:fromItems(reportData.next_work), ax_case:reportData.ax_case, notices:reportData.notices,
+      });
       setSaveState('saved');
-    }catch(e){setToast('저장 실패: '+e.message);setSaveState('error');}
+    } catch(e) {
+      addToast('저장 실패: '+e.message,'error');
+      setSaveState('error');
+    }
     setTimeout(()=>setSaveState('idle'),2500);
-  };
+  },[selectedWeek,activeTab,reportData,addToast]);
 
-  const handleCarryOver=()=>{
-    if(!reportData.curr_work.length){setToast('금주 진행 사항이 없습니다.');return;}
-    if(!window.confirm('금주 진행 내용을 전주 실적으로 이관하고 금주를 초기화할까요?'))return;
+  // 이관
+  const handleCarryOver = useCallback(()=>{
+    if(!reportData.curr_work.length){addToast('금주 진행 사항이 없습니다.','error');return;}
+    if(!confirm('금주 진행 내용을 전주 실적으로 이관할까요?'))return;
     setReportData(p=>({...p,prev_work:[...p.curr_work],curr_work:[]}));
-    setToast('✅ 이관 완료. 저장 버튼을 눌러주세요.');
-  };
+    addToast('이관 완료! 저장 버튼을 눌러주세요.');
+  },[reportData.curr_work,addToast]);
 
-  const handleAnalyze=async()=>{
-    setShowAnalysis(true);setAnalysisLoading(true);setAnalysis(null);
-    try{
+  // AI 분석
+  const handleAnalyze = async()=>{
+    setShowAI(true); setAiLoading(true); setAnalysis(null);
+    try {
       const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reportData,activeTab,selectedWeek})});
       const data=await res.json();
-      if(data.error)throw new Error(data.error);
+      if(data.error) throw new Error(data.error);
       setAnalysis(data);
-    }catch(e){
-      setToast('AI 분석 실패: '+e.message+' (Vercel에 ANTHROPIC_API_KEY 환경변수를 확인해주세요)');
-      setShowAnalysis(false);
-    }
-    setAnalysisLoading(false);
+    } catch(e) { addToast('AI 분석 실패: '+e.message,'error'); setShowAI(false); }
+    setAiLoading(false);
   };
 
+  // ⌘S
   useEffect(()=>{
     const h=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();handleSave();}};
-    window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h);
-  },[reportData]); // eslint-disable-line
+    window.addEventListener('keydown',h); return()=>window.removeEventListener('keydown',h);
+  },[handleSave]);
 
-  const patch=field=>updater=>setReportData(p=>({...p,[field]:typeof updater==='function'?updater(p[field]):updater}));
+  const patch = useCallback(field=>updater=>setReportData(p=>({...p,[field]:typeof updater==='function'?updater(p[field]):updater})),[]);
 
-  const saveBg={idle:'#3b82f6',saving:'rgba(255,255,255,0.1)',saved:'#22c55e',error:'#ef4444'};
-  const saveLabel={idle:'저장',saving:'저장 중...',saved:'저장됨 ✓',error:'저장 실패'};
+  const saveBtnStyle = { idle:{bg:'#3b82f6',label:'저장'}, saving:{bg:'rgba(255,255,255,0.12)',label:'저장 중...'}, saved:{bg:'#22c55e',label:'저장됨 ✓'}, error:{bg:'#ef4444',label:'저장 실패'} };
+  const sbs = saveBtnStyle[saveState];
 
-  const analyticsData={...allPartData,[activeTab]:{prev_work:reportData.prev_work,curr_work:reportData.curr_work,next_work:reportData.next_work}};
+  const analyticsData = useMemo(()=>({
+    ...allPartData,
+    [activeTab]:{prev_work:reportData.prev_work,curr_work:reportData.curr_work,next_work:reportData.next_work}
+  }),[allPartData,activeTab,reportData]);
 
   const VIEWS=[
-    {key:'report',    icon:<FileText size={13}/>,   label:'보고서'},
-    {key:'analytics', icon:<TrendingUp size={13}/>, label:'분석'},
-    {key:'board',     icon:<LayoutGrid size={13}/>, label:'현황판'},
-    {key:'search',    icon:<Search size={13}/>,     label:'검색'},
+    {k:'report',    icon:<FileText size={14}/>,    label:'보고서'},
+    {k:'analytics', icon:<TrendingUp size={14}/>,  label:'분석'},
+    {k:'board',     icon:<LayoutGrid size={14}/>,  label:'현황판'},
+    {k:'global',    icon:<Globe size={14}/>,       label:'전체 보기'},
   ];
 
-  return(
-    <div style={{display:'flex',height:'100vh',background:COLOR.bg,color:COLOR.text,overflow:'hidden',fontFamily:"'Noto Sans KR',sans-serif"}}>
+  return (
+    <div style={{ display:'flex',height:'100vh',background:T.bg,color:T.t1,overflow:'hidden',fontFamily:"'Noto Sans KR',-apple-system,sans-serif" }}>
 
       {/* ── Sidebar ── */}
-      <aside style={{width:240,flexShrink:0,borderRight:`1px solid ${COLOR.border}`,display:'flex',flexDirection:'column',background:COLOR.surface}}>
+      <aside style={{ width:248,flexShrink:0,borderRight:`1px solid ${T.b}`,display:'flex',flexDirection:'column',background:T.surface }}>
         {/* Logo */}
-        <div style={{padding:'22px 20px',borderBottom:`1px solid ${COLOR.border}`}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:32,height:32,borderRadius:10,background:'rgba(59,130,246,0.2)',border:'1px solid rgba(59,130,246,0.3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <LayoutDashboard size={15} color="#60a5fa"/>
+        <div style={{ padding:'20px 20px 18px',borderBottom:`1px solid ${T.b}` }}>
+          <div style={{ display:'flex',alignItems:'center',gap:10 }}>
+            <div style={{ width:34,height:34,borderRadius:11,background:'rgba(59,130,246,0.18)',border:'1px solid rgba(59,130,246,0.3)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 20px rgba(59,130,246,0.12)' }}>
+              <LayoutDashboard size={16} color="#60a5fa"/>
             </div>
             <div>
-              <div style={{fontSize:16,fontWeight:900,color:COLOR.text,letterSpacing:'-0.5px'}}>MIRAI</div>
-              <div style={{fontSize:8,fontWeight:700,color:'#60a5fa',letterSpacing:'0.2em',marginTop:1}}>미래인재실</div>
+              <div style={{ fontSize:15,fontWeight:900,color:T.t1,letterSpacing:'-0.5px',lineHeight:1 }}>MIRAI</div>
+              <div style={{ fontSize:8,fontWeight:700,color:'#60a5fa',letterSpacing:'0.25em',marginTop:3 }}>미래인재실</div>
             </div>
           </div>
         </div>
 
-        {/* Connection */}
-        <div style={{padding:'10px 14px',borderBottom:`1px solid rgba(255,255,255,0.07)`}}>
-          <div style={{display:'flex',alignItems:'center',gap:5,fontSize:10,fontWeight:700,padding:'5px 9px',borderRadius:7,color:online?'#4ade80':'#f87171',background:online?'rgba(74,222,128,0.12)':'rgba(248,113,113,0.12)'}}>
+        {/* Status */}
+        <div style={{ padding:'10px 14px',borderBottom:`1px solid rgba(255,255,255,0.05)` }}>
+          <div style={{ display:'flex',alignItems:'center',gap:6,fontSize:10,fontWeight:700,padding:'5px 10px',borderRadius:8,
+            color:online?'#34d399':'#f87171', background:online?'rgba(52,211,153,0.1)':'rgba(248,113,113,0.1)' }}>
             {online?<Wifi size={11}/>:<WifiOff size={11}/>}
-            {online?'DB 연결됨':'오프라인'}
+            {online?'DB 연결됨':'오프라인 모드'}
           </div>
         </div>
 
         {/* Week nav */}
-        <div style={{padding:'12px 10px',flex:1,overflowY:'auto'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0 6px',marginBottom:10}}>
-            <div style={{fontSize:9,fontWeight:800,color:COLOR.textDim,letterSpacing:'0.2em'}}>WEEKS</div>
+        <div style={{ padding:'14px 12px 8px',borderBottom:`1px solid ${T.b}` }}>
+          <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10 }}>
+            <span style={{ fontSize:9,fontWeight:800,color:T.t4,letterSpacing:'0.2em' }}>WEEKS</span>
             <button onClick={()=>setShowWeekMgr(true)}
-              style={{display:'flex',alignItems:'center',gap:4,padding:'4px 8px',borderRadius:7,border:'1px solid rgba(96,165,250,0.3)',background:'rgba(96,165,250,0.1)',color:'#60a5fa',cursor:'pointer',fontSize:10,fontWeight:700,transition:'all 0.15s'}}
-              onMouseEnter={e=>e.currentTarget.style.background='rgba(96,165,250,0.2)'}
-              onMouseLeave={e=>e.currentTarget.style.background='rgba(96,165,250,0.1)'}>
-              <Plus size={12}/> 주차 추가
+              style={{ display:'flex',alignItems:'center',gap:4,padding:'4px 10px',borderRadius:7,border:'1px solid rgba(96,165,250,0.3)',background:'rgba(96,165,250,0.08)',color:'#60a5fa',cursor:'pointer',fontSize:10,fontWeight:700,transition:'all 0.15s' }}
+              onMouseEnter={e=>e.currentTarget.style.background='rgba(96,165,250,0.18)'}
+              onMouseLeave={e=>e.currentTarget.style.background='rgba(96,165,250,0.08)'}>
+              <Plus size={12}/>주차 추가
             </button>
           </div>
-          <nav style={{display:'flex',flexDirection:'column',gap:2}}>
+          <nav style={{ display:'flex',flexDirection:'column',gap:2,maxHeight:220,overflowY:'auto' }}>
             {weeks.map(w=>{
               const active=selectedWeek===w;
-              return(
-                <button key={w} onClick={()=>setSelectedWeek(w)}
-                  style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 12px',borderRadius:11,border:active?'1px solid rgba(59,130,246,0.35)':'1px solid transparent',background:active?'rgba(59,130,246,0.15)':'transparent',color:active?'#60a5fa':COLOR.textMute,cursor:'pointer',textAlign:'left',transition:'all 0.15s'}}
-                  onMouseEnter={e=>{if(!active){e.currentTarget.style.background='rgba(255,255,255,0.05)';e.currentTarget.style.color=COLOR.textSub;}}}
-                  onMouseLeave={e=>{if(!active){e.currentTarget.style.background='transparent';e.currentTarget.style.color=COLOR.textMute;}}}>
+              return (
+                <button key={w} onClick={()=>setSelectedWeek(w)} style={{
+                  display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 12px',
+                  borderRadius:10,border:active?'1px solid rgba(59,130,246,0.35)':'1px solid transparent',
+                  background:active?'rgba(59,130,246,0.14)':'transparent',
+                  color:active?'#60a5fa':T.t3,cursor:'pointer',textAlign:'left',transition:'all 0.15s',
+                }}
+                onMouseEnter={e=>{if(!active){e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color=T.t2;}}}
+                onMouseLeave={e=>{if(!active){e.currentTarget.style.background='transparent';e.currentTarget.style.color=T.t3;}}}>
                   <div>
-                    <div style={{fontSize:11,fontWeight:700,fontFamily:'monospace'}}>{w}</div>
-                    {active&&<div style={{fontSize:9,color:'#60a5fa',marginTop:2}}>{weekIdToRange(w)}</div>}
+                    <div style={{ fontSize:11,fontWeight:700,fontFamily:'JetBrains Mono,monospace' }}>{w}</div>
+                    {active&&<div style={{ fontSize:9,color:'rgba(96,165,250,0.7)',marginTop:2 }}>{weekIdToRange(w)}</div>}
                   </div>
-                  <ChevronRight size={12} style={{opacity:active?1:0}}/>
+                  <ChevronRight size={12} style={{ opacity:active?0.7:0,transition:'opacity 0.15s' }}/>
                 </button>
               );
             })}
-            {!weeks.length&&<div style={{fontSize:12,color:COLOR.textDim,textAlign:'center',padding:'20px 8px'}}>위 버튼으로 주차를 추가해주세요</div>}
+            {!weeks.length&&<div style={{ fontSize:12,color:T.t4,textAlign:'center',padding:'16px 8px' }}>주차를 추가해주세요</div>}
           </nav>
         </div>
 
         {/* Shortcuts */}
-        <div style={{padding:'14px 16px',borderTop:`1px solid ${COLOR.border}`}}>
-          {[['저장','⌘S'],['항목 편집','더블클릭'],['추가 취소','Esc']].map(([l,k])=>(
-            <div key={l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-              <span style={{fontSize:10,color:COLOR.textMute}}>{l}</span>
-              <kbd style={{background:'rgba(255,255,255,0.08)',padding:'2px 6px',borderRadius:4,fontSize:9,fontFamily:'monospace',color:COLOR.textSub}}>{k}</kbd>
+        <div style={{ padding:'14px 18px',marginTop:'auto',borderTop:`1px solid ${T.b}` }}>
+          <div style={{ fontSize:9,fontWeight:700,color:T.t4,letterSpacing:'0.15em',marginBottom:10 }}>SHORTCUTS</div>
+          {[['저장','⌘S'],['항목 편집','더블클릭'],['취소','Esc']].map(([l,k])=>(
+            <div key={l} style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:7 }}>
+              <span style={{ fontSize:11,color:T.t3 }}>{l}</span>
+              <kbd style={{ background:'rgba(255,255,255,0.07)',border:`1px solid ${T.b}`,padding:'2px 7px',borderRadius:5,fontSize:9,fontFamily:'JetBrains Mono,monospace',color:T.t2 }}>{k}</kbd>
             </div>
           ))}
         </div>
       </aside>
 
       {/* ── Main ── */}
-      <main style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <main style={{ flex:1,display:'flex',flexDirection:'column',overflow:'hidden' }}>
+
         {/* Header */}
-        <header style={{padding:'13px 28px',borderBottom:`1px solid ${COLOR.border}`,background:COLOR.surface,backdropFilter:'blur(20px)',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+        <header style={{ padding:'12px 28px',borderBottom:`1px solid ${T.b}`,background:T.surface,backdropFilter:'blur(20px)',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0 }}>
           <div>
-            <h1 style={{fontSize:18,fontWeight:900,color:COLOR.text,margin:0,letterSpacing:'-0.5px'}}>주간업무 보고</h1>
-            <div style={{display:'flex',alignItems:'center',gap:6,marginTop:3}}>
+            <h1 style={{ fontSize:18,fontWeight:800,color:T.t1,margin:0,letterSpacing:'-0.4px' }}>주간업무 보고</h1>
+            <div style={{ display:'flex',alignItems:'center',gap:6,marginTop:3 }}>
               <Calendar size={11} color="#60a5fa"/>
-              <span style={{fontSize:11,color:COLOR.textSub,fontFamily:'monospace'}}>{selectedWeek||'—'}</span>
-              <span style={{color:COLOR.textDim}}>·</span>
-              <span style={{fontSize:11,color:COLOR.textSub}}>{activeTab} 파트</span>
+              <span style={{ fontSize:11,color:T.t2,fontFamily:'JetBrains Mono,monospace' }}>{selectedWeek||'—'}</span>
+              <span style={{ color:T.t4 }}>·</span>
+              <span style={{ fontSize:11,color:T.t2 }}>{activeTab} 파트</span>
             </div>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{display:'flex',gap:2,padding:3,background:'rgba(255,255,255,0.05)',borderRadius:10,border:`1px solid ${COLOR.border}`}}>
+
+          <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+            {/* View tabs */}
+            <div style={{ display:'flex',gap:1,padding:3,background:'rgba(255,255,255,0.05)',borderRadius:11,border:`1px solid ${T.b}` }}>
               {VIEWS.map(v=>(
-                <button key={v.key} onClick={()=>setViewMode(v.key)}
-                  style={{display:'flex',alignItems:'center',gap:4,padding:'5px 12px',borderRadius:8,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,background:viewMode===v.key?'#fff':'transparent',color:viewMode===v.key?'#0f172a':COLOR.textSub,transition:'all 0.15s'}}>
+                <button key={v.k} onClick={()=>setViewMode(v.k)} style={{
+                  display:'flex',alignItems:'center',gap:5,padding:'6px 13px',borderRadius:8,border:'none',
+                  cursor:'pointer',fontSize:11,fontWeight:700,transition:'all 0.15s',
+                  background:viewMode===v.k?'#fff':'transparent',color:viewMode===v.k?'#0f172a':T.t3,
+                }}>
                   {v.icon}{v.label}
                 </button>
               ))}
             </div>
+
+            {/* AI button */}
             {viewMode==='report'&&(
-              <button onClick={handleAnalyze}
-                style={{display:'flex',alignItems:'center',gap:5,padding:'7px 14px',borderRadius:9,border:'1px solid rgba(139,92,246,0.4)',background:'rgba(139,92,246,0.15)',color:'#c4b5fd',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all 0.15s'}}
-                onMouseEnter={e=>e.currentTarget.style.background='rgba(139,92,246,0.25)'}
-                onMouseLeave={e=>e.currentTarget.style.background='rgba(139,92,246,0.15)'}>
+              <button onClick={handleAnalyze} style={{
+                display:'flex',alignItems:'center',gap:6,padding:'8px 15px',borderRadius:9,
+                border:'1px solid rgba(139,92,246,0.35)',background:'rgba(139,92,246,0.12)',
+                color:'#ddd6fe',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all 0.15s',
+              }}
+              onMouseEnter={e=>e.currentTarget.style.background='rgba(139,92,246,0.22)'}
+              onMouseLeave={e=>e.currentTarget.style.background='rgba(139,92,246,0.12)'}>
                 <Bot size={14}/> AI 분석
               </button>
             )}
-            {saveState!=='idle'&&<span style={{fontSize:11,fontWeight:700,color:saveBg[saveState]}}>{saveLabel[saveState]}</span>}
-            <button onClick={handleSave} disabled={saveState==='saving'}
-              style={{display:'flex',alignItems:'center',gap:5,background:saveBg[saveState],color:'#fff',padding:'8px 18px',borderRadius:9,border:'none',fontSize:12,fontWeight:700,cursor:'pointer',transition:'all 0.2s',boxShadow:'0 2px 12px rgba(59,130,246,0.3)'}}>
-              <Save size={14}/>{saveLabel[saveState]}
+
+            {saveState!=='idle'&&<span style={{ fontSize:11,fontWeight:700,color:{saving:T.t3,saved:'#34d399',error:'#f87171'}[saveState] }}>{sbs.label}</span>}
+
+            <button onClick={handleSave} disabled={saveState==='saving'} style={{
+              display:'flex',alignItems:'center',gap:6,background:sbs.bg,color:'#fff',
+              padding:'8px 20px',borderRadius:10,border:'none',fontSize:12,fontWeight:700,
+              cursor:saveState==='saving'?'not-allowed':'pointer',transition:'all 0.2s',
+              boxShadow:saveState==='idle'?'0 2px 16px rgba(59,130,246,0.3)':'none',
+            }}>
+              <Save size={14}/>{sbs.label}
             </button>
           </div>
         </header>
 
-        <div style={{flex:1,overflowY:'auto',padding:'22px 28px'}}>
+        {/* Body */}
+        <div style={{ flex:1,overflowY:'auto',padding:'24px 28px' }}>
 
-          {/* REPORT VIEW */}
+          {/* ── 보고서 ── */}
           {viewMode==='report'&&(
             <>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
-                <div style={{display:'flex',gap:3,padding:3,background:'rgba(255,255,255,0.05)',borderRadius:13,border:`1px solid ${COLOR.border}`}}>
-                  {PARTS.map(p=>(
-                    <button key={p} onClick={()=>setActiveTab(p)}
-                      style={{padding:'7px 20px',borderRadius:10,border:'none',cursor:'pointer',fontSize:13,fontWeight:700,background:activeTab===p?'#fff':'transparent',color:activeTab===p?'#0f172a':COLOR.textSub,transition:'all 0.2s'}}>
-                      {p} <span style={{fontSize:10,opacity:0.5}}>파트</span>
-                    </button>
-                  ))}
-                </div>
-                <span style={{fontSize:11,color:COLOR.textMute,fontFamily:'monospace'}}>{selectedWeek}</span>
+              <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20 }}>
+                <SegmentControl
+                  options={PARTS.map(p=>p+' 파트')}
+                  value={activeTab+' 파트'}
+                  onChange={v=>setActiveTab(v.replace(' 파트',''))}
+                />
+                <span style={{ fontSize:11,color:T.t4,fontFamily:'JetBrains Mono,monospace' }}>{selectedWeek}</span>
               </div>
 
-              {loading?(
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:280,gap:12,color:COLOR.textMute}}>
-                  <RefreshCw size={24} style={{animation:'spin 1s linear infinite'}}/>
-                  <span style={{fontSize:14}}>데이터 동기화 중...</span>
-                  <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
-                </div>
-              ):(
+              {loading ? <LoadingState/> : (
                 <>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:16}}>
-                    {['prev','curr','next'].map(key=>(
-                      <WorkCard key={key} cardKey={key}
-                        items={reportData[`${key}_work`]}
-                        onItemsChange={patch(`${key}_work`)}
-                        onCarryOver={key==='curr'?handleCarryOver:undefined}
-                        analysisData={analysis?.[`${key}_work`]||[]}/>
+                  <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:16 }}>
+                    {['prev','curr','next'].map(k=>(
+                      <WorkCard key={k} cardKey={k}
+                        items={reportData[`${k}_work`]}
+                        onItemsChange={patch(`${k}_work`)}
+                        onCarryOver={k==='curr'?handleCarryOver:undefined}
+                        analysisData={analysis?.[`${k}_work`]||[]}
+                      />
                     ))}
                   </div>
 
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                  {/* AX + Notices */}
+                  <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:16 }}>
                     {[
-                      {f:'ax_case',icon:<Sparkles size={14} color="#a78bfa"/>,label:'AX 사례 공유',sub:'AI 혁신 적용 내용',c:'#a78bfa',ph:'이번 주 AX 적용 사례를 기록해 주세요...'},
-                      {f:'notices',icon:<Megaphone size={14} color="#f87171"/>,label:'파트 공지 사항',sub:'팀원 공유 필수 사항',c:'#f87171',ph:'팀원들에게 전달할 공지 사항을 입력해 주세요...'},
+                      {f:'ax_case',icon:<Sparkles size={15} color="#c4b5fd"/>,label:'AX 사례 공유',sub:'AI 혁신 적용 내용',c:'#8b5cf6',ph:'이번 주 AX 적용 사례를 기록해 주세요...'},
+                      {f:'notices',icon:<Megaphone size={15} color="#fda4af"/>,label:'파트 공지 사항',sub:'팀원 공유 필수 사항',c:'#f43f5e',ph:'팀원들에게 전달할 공지 사항을 입력해 주세요...'},
                     ].map(({f,icon,label,sub,c,ph})=>(
-                      <div key={f} style={S.card}>
-                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
-                          <div style={{padding:7,borderRadius:9,background:`${c}20`,border:`1px solid ${c}40`}}>{icon}</div>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:13,fontWeight:700,color:COLOR.text}}>{label}</div>
-                            <div style={{fontSize:10,color:COLOR.textMute,marginTop:2}}>{sub}</div>
+                      <div key={f} style={{ background:T.card,border:`1px solid ${T.b}`,borderRadius:16,padding:20,transition:'border-color 0.2s' }}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor=`${c}44`}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor=T.b}>
+                        <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:14 }}>
+                          <div style={{ padding:8,borderRadius:10,background:`${c}1a`,border:`1px solid ${c}33` }}>{icon}</div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:13,fontWeight:700,color:T.t1 }}>{label}</div>
+                            <div style={{ fontSize:10,color:T.t3,marginTop:2 }}>{sub}</div>
                           </div>
-                          <span style={{fontSize:10,color:COLOR.textDim,fontFamily:'monospace'}}>{(reportData[f]||'').length}자</span>
+                          <span style={{ fontSize:10,color:T.t4,fontFamily:'JetBrains Mono,monospace' }}>{(reportData[f]||'').length}자</span>
                         </div>
-                        <textarea value={reportData[f]||''} onChange={e=>setReportData(p=>({...p,[f]:e.target.value}))} placeholder={ph}
-                          style={{width:'100%',background:'transparent',border:'none',color:COLOR.textSub,fontSize:13,lineHeight:1.7,resize:'none',height:96,outline:'none',fontFamily:"'Noto Sans KR',sans-serif",boxSizing:'border-box'}}/>
-                        <div style={{height:2,background:'rgba(255,255,255,0.08)',borderRadius:999,overflow:'hidden',marginTop:6}}>
-                          <div style={{height:'100%',background:c,borderRadius:999,width:`${Math.min(((reportData[f]?.length||0)/300)*100,100)}%`,transition:'width 0.4s'}}/>
+                        <textarea value={reportData[f]||''} onChange={e=>setReportData(p=>({...p,[f]:e.target.value}))} placeholder={ph} style={{
+                          width:'100%',background:'transparent',border:'none',color:T.t2,
+                          fontSize:13,lineHeight:1.7,resize:'none',height:96,outline:'none',
+                          fontFamily:"'Noto Sans KR',-apple-system,sans-serif",boxSizing:'border-box',
+                        }}/>
+                        <div style={{ height:2,background:'rgba(255,255,255,0.06)',borderRadius:999,overflow:'hidden',marginTop:8 }}>
+                          <div style={{ height:'100%',background:c,borderRadius:999,width:`${Math.min(((reportData[f]?.length||0)/300)*100,100)}%`,transition:'width 0.4s' }}/>
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  {showAnalysis&&(
-                    <div style={{marginTop:16,background:COLOR.elevated,border:'1px solid rgba(139,92,246,0.3)',borderRadius:16,overflow:'hidden'}}>
-                      <div style={{padding:'13px 18px',borderBottom:`1px solid ${COLOR.border}`,background:'rgba(139,92,246,0.1)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <span style={{fontSize:13,fontWeight:800,color:'#c4b5fd',display:'flex',alignItems:'center',gap:7}}><Bot size={15}/> AI 분석 — {activeTab} 파트</span>
-                        <button onClick={()=>setShowAnalysis(false)} style={S.iconBtn}><X size={14}/></button>
+                  {/* AI Panel */}
+                  {showAI&&(
+                    <div style={{ marginTop:16,background:T.card,border:'1px solid rgba(139,92,246,0.25)',borderRadius:16,overflow:'hidden',animation:'fadeUp 0.2s ease' }}>
+                      <div style={{ padding:'13px 20px',borderBottom:`1px solid ${T.b}`,background:'rgba(139,92,246,0.08)',display:'flex',justifyContent:'space-between',alignItems:'center' }}>
+                        <span style={{ fontSize:13,fontWeight:800,color:'#ddd6fe',display:'flex',alignItems:'center',gap:7 }}><Bot size={15}/> AI 보고서 분석 — {activeTab} 파트</span>
+                        <IconBtn icon={<X size={14}/>} onClick={()=>setShowAI(false)}/>
                       </div>
-                      <div style={{padding:18}}>
-                        {analysisLoading?(
-                          <div style={{display:'flex',alignItems:'center',gap:10,color:COLOR.textMute,fontSize:13}}>
-                            <RefreshCw size={16} style={{animation:'spin 1s linear infinite',color:'#c4b5fd'}}/>
+                      <div style={{ padding:20 }}>
+                        {aiLoading?(
+                          <div style={{ display:'flex',alignItems:'center',gap:10,color:T.t3,fontSize:13 }}>
+                            <RefreshCw size={16} className="animate-spin" style={{ color:'#c4b5fd' }}/>
                             Claude가 보고서를 분석 중입니다...
                           </div>
-                        ):analysis?(
+                        ):analysis&&(
                           <>
-                            {analysis.summary&&<div style={{padding:'12px 14px',borderRadius:10,background:'rgba(139,92,246,0.1)',border:'1px solid rgba(139,92,246,0.2)',fontSize:12,color:'#ddd6fe',lineHeight:1.7,marginBottom:14}}>{analysis.summary}</div>}
+                            {analysis.summary&&<div style={{ padding:'12px 16px',borderRadius:10,background:'rgba(139,92,246,0.08)',border:'1px solid rgba(139,92,246,0.18)',fontSize:13,color:'#ddd6fe',lineHeight:1.7,marginBottom:16 }}>{analysis.summary}</div>}
                             {['prev_work','curr_work','next_work'].map(key=>{
                               const items=(analysis[key]||[]).filter(x=>x.flags?.length);
-                              if(!items.length)return null;
+                              if(!items.length) return null;
                               const label={prev_work:'전주 실적',curr_work:'금주 진행',next_work:'차주 예정'}[key];
-                              return(
-                                <div key={key} style={{marginBottom:14}}>
-                                  <div style={{fontSize:11,fontWeight:700,color:COLOR.textMute,marginBottom:8,letterSpacing:'0.08em'}}>{label}</div>
+                              return (
+                                <div key={key} style={{ marginBottom:14 }}>
+                                  <div style={{ fontSize:11,fontWeight:700,color:T.t3,marginBottom:8,letterSpacing:'0.08em',textTransform:'uppercase' }}>{label}</div>
                                   {items.map(item=>(
-                                    <div key={item.index} style={{padding:'10px 14px',borderRadius:10,background:'rgba(255,255,255,0.04)',border:`1px solid ${COLOR.border}`,marginBottom:6}}>
-                                      <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6}}>
-                                        {item.flags.map(f=><FlagBadge key={f} flag={f} comment={item.comment}/>)}
+                                    <div key={item.index} style={{ padding:'12px 16px',borderRadius:11,background:'rgba(255,255,255,0.03)',border:`1px solid ${T.b}`,marginBottom:7 }}>
+                                      <div style={{ display:'flex',gap:5,flexWrap:'wrap',marginBottom:6 }}>
+                                        {(item.flags||[]).map(f=>(
+                                          <span key={f} style={{ display:'inline-flex',alignItems:'center',gap:3,padding:'2px 8px',borderRadius:5,fontSize:10,fontWeight:700,
+                                            color:f==='트래킹 누락'?'#f87171':'#fbbf24',
+                                            background:f==='트래킹 누락'?'rgba(248,113,113,0.12)':'rgba(251,191,36,0.12)',
+                                            border:`1px solid ${f==='트래킹 누락'?'rgba(248,113,113,0.3)':'rgba(251,191,36,0.3)'}`}}>
+                                            {f==='트래킹 누락'?<AlertTriangle size={8}/>:<Zap size={8}/>}{f}
+                                          </span>
+                                        ))}
                                       </div>
-                                      {item.comment&&<div style={{fontSize:11,color:COLOR.textMute,lineHeight:1.6}}>{item.comment}</div>}
+                                      {item.comment&&<div style={{ fontSize:12,color:T.t3,lineHeight:1.6 }}>{item.comment}</div>}
                                     </div>
                                   ))}
                                 </div>
                               );
                             })}
                           </>
-                        ):null}
+                        )}
                       </div>
                     </div>
                   )}
@@ -1028,13 +1357,27 @@ export default function MiraiDashboard() {
 
           {viewMode==='analytics'&&<AnalyticsView selectedWeek={selectedWeek} data={analyticsData}/>}
           {viewMode==='board'&&<KanbanBoard data={analyticsData}/>}
-          {viewMode==='search'&&<SearchView/>}
+          {viewMode==='global'&&<GlobalView/>}
         </div>
       </main>
 
-      {showWeekMgr&&<WeekManager weeks={weeks} onClose={()=>setShowWeekMgr(false)} onAdd={w=>{setWeeks(p=>[...new Set([...p,w])].sort());setSelectedWeek(w);setToast(`주차 ${w} 추가됨`);}}/>}
-      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
-      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+      {showWeekMgr&&(
+        <WeekManager weeks={weeks} onClose={()=>setShowWeekMgr(false)}
+          onAdd={w=>{ setWeeks(p=>[...new Set([...p,w])].sort()); setSelectedWeek(w); addToast(`주차 ${w} 추가됨`); }}/>
+      )}
+
+      {/* Toast stack */}
+      <div style={{ position:'fixed',bottom:28,left:'50%',transform:'translateX(-50%)',display:'flex',flexDirection:'column',gap:8,zIndex:9999,alignItems:'center' }}>
+        {toasts.map(t=>(
+          <Toast key={t.id} msg={t.msg} type={t.type} onClose={()=>removeToast(t.id)}/>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+        .animate-spin{animation:spin 1s linear infinite}
+      `}</style>
     </div>
   );
 }
